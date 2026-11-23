@@ -2,8 +2,7 @@ name: App bauen
 
 on:
   push:
-    branches: [main]
-    tags: ["v*"]
+    branches: [main, demo]
   pull_request:
   workflow_dispatch:
 
@@ -76,15 +75,16 @@ jobs:
             --notes "Zum Installieren die Datei ProtokollKI.apk auf dem Handy öffnen. Build ${GITHUB_RUN_NUMBER}, Commit ${GITHUB_SHA::7}." \
             --latest
 
-      - name: Feste Version veröffentlichen (Tag)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Demo-Version veröffentlichen (Branch demo)
+        if: github.ref == 'refs/heads/demo'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp out/ProtokollKI.apk "out/ProtokollKI-${GITHUB_REF_NAME}.apk"
-          gh release create "$GITHUB_REF_NAME" "out/ProtokollKI-${GITHUB_REF_NAME}.apk" \
-            --title "Protokoll KI ${GITHUB_REF_NAME}" \
-            --notes "Feste, getestete Version. Zum Installieren die APK-Datei auf dem Handy öffnen." \
+          cp out/ProtokollKI.apk out/ProtokollKI-Demo.apk
+          gh release delete demo --yes --cleanup-tag 2>/dev/null || true
+          gh release create demo out/ProtokollKI-Demo.apk --target "$GITHUB_SHA" \
+            --title "Protokoll KI – Demo-Version (stabil, Build ${GITHUB_RUN_NUMBER})" \
+            --notes "Feste, getestete Version für Vorführungen. Neue Funktionen kommen zuerst in die neueste Version." \
             --latest=false
 
   models:
