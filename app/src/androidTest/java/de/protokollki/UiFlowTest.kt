@@ -181,7 +181,12 @@ class UiFlowTest {
 
         val chip = hasContentDescription("Quelle abspielen") and hasClickAction()
         scrollTo(chip)
-        composeRule.onAllNodes(chip)[0].performClick()
+        // Nur einen tatsächlich sichtbaren Beleg antippen (die Liste hält auch Elemente außerhalb vor)
+        val all = composeRule.onAllNodes(chip)
+        val visible = (0 until all.fetchSemanticsNodes().size).first { i ->
+            runCatching { all[i].assertIsDisplayed() }.isSuccess
+        }
+        all[visible].performClick()
         waitFor(hasText("Im Transkript zeigen"), timeoutMs = 20_000, unmerged = true)
         composeRule.onNodeWithText("Zitat", substring = true).assertExists()
         assertTrue("Zitatkarte zeigt keinen Redebeitrag der Besprechung",
