@@ -212,7 +212,7 @@ object TextCleanup {
  * und führt zum Absturz ("JNI DETECTED ERROR"). Diese Klasse erzeugt die passende Signatur
  * (geprüft mit javap: `public java.lang.Integer invoke(int, int, long)`).
  */
-class DiarizationCallback(private val onProgress: (Float) -> Boolean) : (Int, Int, Long) -> Int? {
-    override fun invoke(done: Int, total: Int, arg: Long): Int? =
+class DiarizationCallback(private val onProgress: (Float) -> Boolean) : (Int, Int, Long) -> Int {
+    override fun invoke(done: Int, total: Int, arg: Long): Int =
         if (onProgress(if (total > 0) done.toFloat() / total else 0f)) 0 else 1
 }
