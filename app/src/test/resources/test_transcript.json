@@ -1,0 +1,68 @@
+[
+ {
+  "speakerId": 0,
+  "start": 0.03096874989569187,
+  "end": 6.797843933105469,
+  "text": "Guten Morgen zusammen. Ich eröffne unsere Themenbesprechung. Heute geht es um den Umzug des Pflegedienstes und um die neue Tourenplanung."
+ },
+ {
+  "speakerId": 1,
+  "start": 7.472844123840332,
+  "end": 15.319719314575195,
+  "text": "Wolfgang zum Umzug. Der Mietvertrag für das neue Büro in der Hauptstraße ist unterschrieben. Ein Zug ist am 1. Februar. Das ist gut. Das ist gut."
+ },
+ {
+  "speakerId": 2,
+  "start": 15.015969276428223,
+  "end": 19.97722053527832,
+  "text": "Wir brauchen dann aber noch neue Möbel und die Telefonanlage muss umgezogen werden."
+ },
+ {
+  "speakerId": 0,
+  "start": 20.669095993041992,
+  "end": 25.005970001220703,
+  "text": "Wichtig! Frau Becker, können Sie bis Freitag drei Angebote für die Möbel einholen?"
+ },
+ {
+  "speakerId": 1,
+  "start": 25.714719772338867,
+  "end": 28.904096603393555,
+  "text": "Ja, das mache ich. Bis Freitag habe ich die Angebote."
+ },
+ {
+  "speakerId": 0,
+  "start": 29.61284637451172,
+  "end": 35.94096755981445,
+  "text": "Sehr gut, Herr Wagner, kümmern Sie sich bitte um die Telefonanlage und klären Sie das mit dem Anbieter bis Ende Januar."
+ },
+ {
+  "speakerId": 2,
+  "start": 36.666595458984375,
+  "end": 45.812843322753906,
+  "text": "Ich rufe morgen beim Anbieter an. Zur Tourenplanung habe ich noch einen Pump. Die Touren in Norden sind zu lang. Wir verlieren jeden Tag fast eine Stunde."
+ },
+ {
+  "speakerId": 1,
+  "start": 46.40346908569336,
+  "end": 50.43659591674805,
+  "text": "Das sehe ich auch so. Hier könnten die Tour Nord teilen und einen zweiten Wagen einsetzen."
+ },
+ {
+  "speakerId": 0,
+  "start": 51.09471893310547,
+  "end": 57.9965934753418,
+  "text": "Dann beschließen wir, ab März wird die Tour Nord in zwei Touren aufgeteilt. Herr Wagner erstellt dafür bis zur nächsten Sitzung einen Entwurf."
+ },
+ {
+  "speakerId": 2,
+  "start": 58.78971862792969,
+  "end": 63.12659454345703,
+  "text": "Ach, ich, offen ist noch, ob wir dafür eine zusätzliche Pflegekraft brauchen."
+ },
+ {
+  "speakerId": 0,
+  "start": 63.78472137451172,
+  "end": 68.96534729003906,
+  "text": "Das klären wir in der nächsten Sitzung am 15. Januar. Vielen Dank, dann schließe ich die Besprechung."
+ }
+]

@@ -1,0 +1,93 @@
+name: App bauen
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SHERPA_VERSION: "2.0.3"
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Android NDK und CMake installieren
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.13113456" "cmake;3.31.6" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - name: sherpa-onnx herunterladen
+        run: |
+          mkdir -p app/libs
+          curl -fsSL -o app/libs/sherpa-onnx.aar \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/sherpa-onnx-${SHERPA_VERSION}.aar"
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: android-arm64
+
+      - name: Unit-Tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: APK bauen
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: APK umbenennen
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk out/ProtokollKI.apk
+          ls -lh out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ProtokollKI-apk
+          path: out/ProtokollKI.apk
+
+      - name: Release "neueste Version" aktualisieren
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest out/ProtokollKI.apk \
+            --title "Protokoll KI – neueste Version (Build ${GITHUB_RUN_NUMBER})" \
+            --notes "Zum Installieren die Datei ProtokollKI.apk auf dem Handy öffnen. Build ${GITHUB_RUN_NUMBER}, Commit ${GITHUB_SHA::7}." \
+            --latest
+
+  models:
+    name: Modell-Links prüfen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Alle Download-Links erreichbar?
+        run: |
+          fail=0
+          for u in $(python3 scripts/model_urls.py | sort -u); do
+            info=$(curl -sIL -o /dev/null -w '%{http_code} %{size_download} %{url_effective}' "$u")
+            len=$(curl -sIL "$u" | grep -i '^content-length' | tail -1 | tr -d '\r' | awk '{print $2}')
+            code=${info%% *}
+            echo "$code  ${len:-?} bytes  $u"
+            if [ "$code" != "200" ]; then fail=1; fi
+          done
+          exit $fail
