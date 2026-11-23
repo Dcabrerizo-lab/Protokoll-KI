@@ -70,14 +70,22 @@ object AskEngine {
                 }
                 update { it.copy(progressText = "Durchsuche ${hits.distinctBy { h -> h.meetingId }.size} Besprechungen …") }
                 val top = hits.take(AskPrompt.MAX_SOURCES)
-                val prompt = AskPrompt.build(q, top, meetings)
-                val raw = model.complete(AskPrompt.SYSTEM, prompt, 450, 0.2f, null) { _, done, total ->
-                    if (total > 0) update { s ->
-                        s.copy(progressText = if (done < total) "Lese Fundstellen …" else "Formuliere Antwort …")
+                fun attempt(strict: Boolean): String {
+                    val prompt = AskPrompt.build(q, top, meetings, strict)
+                    val raw = model.complete(AskPrompt.SYSTEM, prompt, 450, 0.2f, null) { _, done, total ->
+                        if (total > 0) update { s ->
+                            s.copy(progressText = if (done < total) "Lese Fundstellen …" else "Formuliere Antwort …")
+                        }
+                        _state.value.question == q
                     }
-                    _state.value.question == q
+                    return AskPrompt.clean(raw, top.size)
                 }
-                AskPrompt.clean(raw, top.size)
+                val first = attempt(strict = true)
+                // Ausweg gewählt, obwohl es Treffer gibt: einmal ohne Ausweg nachfragen
+                if (first.startsWith(AskPrompt.NOTHING_FOUND) && _state.value.question == q) {
+                    val second = attempt(strict = false)
+                    if (AskPrompt.citations(second).isNotEmpty()) second else first
+                } else first
               }
             }
             if (_state.value.question != q) return@launch

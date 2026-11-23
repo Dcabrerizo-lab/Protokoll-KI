@@ -38,4 +38,12 @@ class AskPromptTest {
         assertEquals(listOf(2, 1), AskPrompt.citations("A [2]. B [1][2]."))
         assertEquals(emptyList<Int>(), AskPrompt.citations("keine"))
     }
+
+    @Test
+    fun relaxedPromptHasNoEscapeClause() {
+        val hit = SearchHit("m1", "Teamsitzung", 0L, -1, 0f, "", "Tour Nord wird geteilt", 1.0)
+        val p = AskPrompt.build("Was wurde zur Tour Nord beschlossen?", listOf(hit), emptyList(), strict = false)
+        assertTrue(!p.contains(AskPrompt.NOTHING_FOUND))
+        assertTrue(p.contains("[1]") && p.contains("Tour Nord wird geteilt"))
+    }
 }

@@ -118,8 +118,9 @@ class UiFlowTest {
 
     /** Öffnet eine Besprechung über ihre Karte auf der Startseite. */
     private fun openMeeting(title: String) {
-        waitFor(hasText(title))
+        waitFor(hasScrollToIndexAction())
         scrollTo(hasText(title))
+        waitFor(hasText(title))
         composeRule.onNode(hasText(title) and hasClickAction()).performClick()
         waitFor(tab("Aufgaben"))
     }
@@ -181,7 +182,7 @@ class UiFlowTest {
         val chip = hasContentDescription("Quelle abspielen") and hasClickAction()
         scrollTo(chip)
         composeRule.onAllNodes(chip)[0].performClick()
-        waitFor(hasText("Im Transkript zeigen"))
+        waitFor(hasText("Im Transkript zeigen"), timeoutMs = 20_000, unmerged = true)
         composeRule.onNodeWithText("Zitat", substring = true).assertExists()
         assertTrue("Zitatkarte zeigt keinen Redebeitrag der Besprechung",
             seed.audio.segments.any { exists(hasText("„${it.text}“")) })
@@ -306,8 +307,10 @@ class UiFlowTest {
 
     @Test
     fun importedProtocol_showsImportedLabel_andNoAudioPlayer() {
-        waitFor(hasText(UI_IMPORTED_TITLE))
+        // Das importierte Protokoll ist älter und steht weiter unten: erst scrollen, dann prüfen
+        waitFor(hasText(UI_AUDIO_TITLE))
         scrollTo(hasText(UI_IMPORTED_TITLE))
+        waitFor(hasText(UI_IMPORTED_TITLE))
         composeRule.onNode(hasText(UI_IMPORTED_TITLE) and hasText("Importiert")).assertExists()
         composeRule.onAllNodes(hasText(UI_AUDIO_TITLE) and hasText("Importiert")).assertCountEquals(0)
 
@@ -344,6 +347,8 @@ class UiFlowTest {
             composeRule.waitUntil(15_000) {
                 TestEnv.context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
             }
+            // Im Querformat können die Reiter unterhalb des sichtbaren Bereichs liegen
+            scrollTo(tab("Aufgaben"))
             waitFor(tab("Aufgaben") and isSelected(), timeoutMs = 15_000)
             composeRule.onNode(tab("Aufgaben")).assertIsSelected()
         } finally {

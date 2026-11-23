@@ -15,7 +15,11 @@ object AskPrompt {
 
     private val MARKER = Regex("\\[(\\d{1,2})(?:\\s*[,;]\\s*(\\d{1,2}))*]")
 
-    fun build(question: String, hits: List<SearchHit>, meetings: List<Meeting>): String {
+    /**
+     * [strict] = false: zweiter Versuch ohne "nichts gefunden"-Ausweg. Kleine Modelle wählen den
+     * Ausweg oft, obwohl die Fundstellen die Antwort enthalten.
+     */
+    fun build(question: String, hits: List<SearchHit>, meetings: List<Meeting>, strict: Boolean = true): String {
         val byId = meetings.associateBy { it.id }
         val fmt = SimpleDateFormat("EEEE, dd.MM.yyyy", Locale.GERMAN)
         val sources = hits.mapIndexed { i, h ->
@@ -34,7 +38,7 @@ Frage: $question
 Fundstellen:
 $sources
 
-Beantworte die Frage in 1 bis 4 Sätzen nur anhand der Fundstellen. Setze hinter jede Aussage die Nummer der belegenden Fundstelle in eckigen Klammern, z. B. [2]. Nenne bei Bedarf Datum oder Besprechung. Wenn die Fundstellen die Frage nicht beantworten, antworte genau: "$NOTHING_FOUND"
+Beantworte die Frage in 1 bis 4 Sätzen nur anhand der Fundstellen. Setze hinter jede Aussage die Nummer der belegenden Fundstelle in eckigen Klammern, z. B. [2]. Nenne bei Bedarf Datum oder Besprechung. ${if (strict) "Wenn die Fundstellen die Frage nicht beantworten, antworte genau: \"$NOTHING_FOUND\"" else "Die Fundstellen enthalten Begriffe aus der Frage: Gib wieder, was dort dazu gesagt wurde."}
 """.trim()
     }
 

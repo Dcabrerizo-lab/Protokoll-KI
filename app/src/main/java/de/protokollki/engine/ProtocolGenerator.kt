@@ -146,9 +146,13 @@ class ProtocolGenerator(private val model: TextModel) {
         val doneKeys = mutableMapOf<String, Int>()
         raws.forEach { r -> parseCompleted(r, n).forEach { (k, ref) -> doneKeys.putIfAbsent(k, ref) } }
         val completed = openTasks.filter { it.key in doneKeys }
-        val sensitive = raws.flatMap { parseSensitive(it, participants) }.distinctBy { it.lowercase() }
+        val finalTasks = dedupe(tasks)
+        val sensitive = (raws.flatMap { parseSensitive(it, participants) } +
+            if (template == ProtocolTemplate.FALLBESPRECHUNG || template == ProtocolTemplate.UEBERGABE)
+                addressedClients(segments, finalTasks) else emptyList())
+            .distinctBy { it.lowercase() }
         progress.update(1f, "Fertig")
-        return Result(summary, dedupe(tasks), completed,
+        return Result(summary, finalTasks, completed,
             completed.associate { it.taskId to (doneKeys[it.key] ?: -1) }, sensitive)
     }
 
@@ -274,7 +278,20 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
 """.trimIndent() + "\n" + JSON_STRING
 
         private val ADDRESS = Regex("\\b(Frau|Herr|Herrn)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})")
-        private val GENERIC = Regex("^(Person \\d+|offen|unklar|alle|team|)$", RegexOption.IGNORE_CASE)
+        private val GENERIC = Regex("^(Person \\d+|Sprecher(in)? \\d+|offen|unklar|unbekannt|keine angabe|niemand|alle|team|ich|sie|du|wir|er|ihr|-|n/?a|)$", RegexOption.IGNORE_CASE)
+
+        /**
+         * Fall- und Übergabebesprechungen: angesprochene Personen ("Herr Krüger", "Frau Lehmann"), die
+         * keine Aufgabe übernehmen, sind in der Regel Klientinnen und Klienten. Sie werden als sensibel
+         * vorgeschlagen, auch wenn das Sprachmodell sie nicht meldet (kleine Modelle tun das selten).
+         */
+        internal fun addressedClients(segments: List<Segment>, tasks: List<TaskItem>): List<String> {
+            val staff = tasks.flatMap { t -> ADDRESS.findAll(t.owner).map { it.groupValues[2].lowercase() }.toList() +
+                t.owner.split(' ').map { it.lowercase() } }.toSet()
+            return segments.flatMap { seg -> ADDRESS.findAll(seg.text).map { it.groupValues[2] }.toList() }
+                .filter { it.lowercase() !in staff }
+                .distinctBy { it.lowercase() }
+        }
 
         /**
          * Kleine Modelle setzen als Verantwortliche oft die Sprecherbezeichnung ("Person 2") statt des

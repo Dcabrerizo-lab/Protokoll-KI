@@ -26,6 +26,11 @@ else:
     ok(dup == 0, f"keine doppelten Folgesegmente ({dup})")
     tasks = m.get("tasks", [])
     ok(len(tasks) >= exp.get("min_tasks", 0), f"Aufgaben: {len(tasks)} (mind. {exp.get('min_tasks', 0)})")
+    for t in tasks:
+        out.append(f"INFO  [{name}] Aufgabe: {t.get('text')!r} · {t.get('owner')!r} · {t.get('due')!r} · Beleg {t.get('ref')}")
+    for i, sg in enumerate(segs):
+        if re.search(r"\b(Frau|Herr|Herrn)\s", sg["t"]):
+            out.append(f"INFO  [{name}] Anrede in #{i} (Sprecher {sg['s']}): {sg['t'][:110]!r}")
     owners = " ".join(t.get("owner", "") for t in tasks).lower()
     for o in exp.get("task_owners", []):
         ok(o.lower()[:5] in owners, f"Aufgabe für {o} zugeordnet")

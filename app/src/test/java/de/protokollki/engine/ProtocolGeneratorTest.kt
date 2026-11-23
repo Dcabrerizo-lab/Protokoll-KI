@@ -168,4 +168,16 @@ class ProtocolGeneratorTest {
         val self = { id: Int -> if (id == 0) "Frau Becker" else "Person 2" }
         assertEquals("Person 2", ProtocolGenerator.resolveOwner("Person 2", 0, segs.take(1), self))
     }
+
+    @Test
+    fun addressedClientsExcludeTaskOwners() {
+        val segs = listOf(
+            Segment(0, 0f, 3f, "Wir besprechen heute Herrn Krüger aus der Lindenstraße."),
+            Segment(1, 3f, 5f, "Frau Schmidt beantragt die Höherstufung, Herr Krüger braucht einen Rollator."),
+        )
+        val tasks = listOf(de.protokollki.data.TaskItem("Höherstufung beantragen", "Frau Schmidt", "", ref = 1))
+        assertEquals(listOf("Krüger"), ProtocolGenerator.addressedClients(segs, tasks))
+        val name = { id: Int -> "Person ${id + 1}" }
+        assertEquals("Frau Schmidt", ProtocolGenerator.resolveOwner("Sie", 1, segs, name))
+    }
 }

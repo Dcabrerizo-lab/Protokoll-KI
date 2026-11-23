@@ -38,8 +38,11 @@ object AppLock {
         val km = context.getSystemService(KeyguardManager::class.java)
         if (km?.isDeviceSecure == true) return true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bm = context.getSystemService(BiometricManager::class.java)
-            return bm?.canAuthenticate(AUTHENTICATORS) == BiometricManager.BIOMETRIC_SUCCESS
+            // Ohne Berechtigung oder bei Herstellerfehlern lieber "nicht verfügbar" als ein Absturz
+            return runCatching {
+                context.getSystemService(BiometricManager::class.java)
+                    ?.canAuthenticate(AUTHENTICATORS) == BiometricManager.BIOMETRIC_SUCCESS
+            }.getOrDefault(false)
         }
         return false
     }
