@@ -42,7 +42,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        if (intent == null || intent.action != Intent.ACTION_SEND) return
+        if (intent == null) return
+        // Nur in Test-Builds (debuggable): automatischer Ende-zu-Ende-Test im Emulator
+        val debuggable = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (debuggable && intent.action == "de.protokollki.DEBUG_IMPORT") {
+            intent.getStringExtra("model_set")?.let { de.protokollki.engine.ModelManager.selectSet(it) }
+            de.protokollki.data.AppSettings.update { it.copy(onboardingDone = true, autoProcess = true) }
+            intent.getStringExtra("path")?.let { sharedUri.value = Uri.fromFile(java.io.File(it)) }
+            return
+        }
+        if (intent.action != Intent.ACTION_SEND) return
         val type = intent.type.orEmpty()
         if (!type.startsWith("audio/") && !type.startsWith("video/")) return
         val uri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)

@@ -16,7 +16,9 @@ android {
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "1.0.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
 
-        ndk { abiFilters += listOf("arm64-v8a") }
+        // Standard: nur arm64 (alle aktuellen Handys). Für den Emulator-Test: -Ppk.abis=x86_64
+        val abis = (project.findProperty("pk.abis") as String?) ?: "arm64-v8a"
+        ndk { abiFilters += abis.split(",") }
 
         externalNativeBuild {
             cmake {

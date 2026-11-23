@@ -1,0 +1,65 @@
+name: Ende-zu-Ende-Test (Emulator)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: KVM aktivieren
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Android NDK und CMake installieren
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.13113456" "cmake;3.31.6" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+      - name: sherpa-onnx herunterladen
+        run: |
+          mkdir -p app/libs
+          curl -fsSL -o app/libs/sherpa-onnx.aar https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.3/sherpa-onnx-2.0.3.aar
+      - name: Test-APK (x86_64) bauen
+        run: ./gradlew --no-daemon assembleDebug -Ppk.abis=x86_64
+      - name: Modelle (Kompakt) laden
+        run: |
+          mkdir -p e2e-models tmp && cd tmp
+          GH=https://github.com/k2-fsa/sherpa-onnx/releases/download
+          curl -fsSL $GH/asr-models/sherpa-onnx-whisper-base.tar.bz2 | tar xj
+          cp sherpa-onnx-whisper-base/base-encoder.int8.onnx sherpa-onnx-whisper-base/base-decoder.int8.onnx sherpa-onnx-whisper-base/base-tokens.txt ../e2e-models/
+          curl -fsSL $GH/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2 | tar xj
+          cp sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx ../e2e-models/pyannote-segmentation-3-0.int8.onnx
+          curl -fsSL -o ../e2e-models/wespeaker_en_voxceleb_resnet34_LM.onnx $GH/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx
+          curl -fsSL -o ../e2e-models/qwen2.5-1.5b-instruct-q4_k_m.gguf https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
+          ls -lh ../e2e-models
+      - name: Emulator starten und testen
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          ram-size: 6144M
+          disk-size: 8G
+          cores: 4
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          script: bash scripts/e2e/run.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-ergebnis
+          path: e2e-out/
