@@ -149,4 +149,23 @@ class ProtocolGeneratorTest {
         assertEquals("Kurz.", r.summary.overview)
         assertEquals(listOf("Drei Angebote einholen"), r.tasks.map { it.text })
     }
+
+    @Test
+    fun genericOwnerIsResolvedFromAddress() {
+        val segs = listOf(
+            Segment(0, 0f, 3f, "Frau Becker, können Sie bis Freitag drei Angebote einholen?"),
+            Segment(1, 3f, 5f, "Ja, das mache ich."),
+            Segment(0, 5f, 8f, "Herrn Dr. Wagner bitten wir um den Entwurf."),
+        )
+        val name = { id: Int -> "Person ${id + 1}" }
+        assertEquals("Frau Becker", ProtocolGenerator.resolveOwner("Person 2", 1, segs, name))
+        assertEquals("Frau Becker", ProtocolGenerator.resolveOwner("Person 2", 0, segs, name))
+        assertEquals("Herr Wagner", ProtocolGenerator.resolveOwner("offen", 2, segs, name))
+        // Konkreter Name bleibt, ungültiger Beleg ändert nichts
+        assertEquals("Herr Schulz", ProtocolGenerator.resolveOwner("Herr Schulz", 1, segs, name))
+        assertEquals("Person 2", ProtocolGenerator.resolveOwner("Person 2", 9, segs, name))
+        // Spricht die angesprochene Person selbst, wird sie nicht übernommen
+        val self = { id: Int -> if (id == 0) "Frau Becker" else "Person 2" }
+        assertEquals("Person 2", ProtocolGenerator.resolveOwner("Person 2", 0, segs.take(1), self))
+    }
 }

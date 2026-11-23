@@ -1,0 +1,53 @@
+{
+ "scenario": "zwei_personen",
+ "template": "DIENSTBESPRECHUNG",
+ "agenda": [],
+ "after": null,
+ "ref": [
+  {
+   "spk": "T",
+   "start": 0.0,
+   "end": 3.45,
+   "text": "Hallo Frau Kaiser, kurze Abstimmung zum Dienstplan für Dezember."
+  },
+  {
+   "spk": "E",
+   "start": 4.22,
+   "end": 8.18,
+   "text": "Gerne. Mir fehlen noch zwei Nachtdienste in der zweiten Woche."
+  },
+  {
+   "spk": "T",
+   "start": 8.77,
+   "end": 13.16,
+   "text": "Die übernehme ich selbst. Können Sie den Dienstplan bis Mittwoch fertig machen und aushängen?"
+  },
+  {
+   "spk": "E",
+   "start": 13.98,
+   "end": 20.67,
+   "text": "Ja, bis Mittwoch hängt er aus. Außerdem ist die Weihnachtsfeier am achtzehnten Dezember im Gemeindesaal."
+  },
+  {
+   "spk": "T",
+   "start": 21.4,
+   "end": 24.98,
+   "text": "Prima, dann laden Sie bitte alle bis Ende der Woche ein. Danke Ihnen."
+  }
+ ],
+ "expect": {
+  "speakers": [
+   2,
+   2
+  ],
+  "keywords": [
+   "Dienstplan",
+   "Weihnachtsfeier"
+  ],
+  "task_owners": [
+   "Kaiser"
+  ],
+  "min_tasks": 1,
+  "decisions_any": []
+ }
+}

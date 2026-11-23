@@ -60,7 +60,9 @@ class ProcessingService : LifecycleService() {
             ACTION_PROCESS, ACTION_REGENERATE -> {
                 val id = intent.getStringExtra(EXTRA_ID) ?: return START_NOT_STICKY
                 synchronized(queued) {
-                    if (id in queued) return START_NOT_STICKY
+                    // Nach "Abbrechen" darf dieselbe Besprechung sofort neu eingereiht werden,
+                    // auch wenn der abgebrochene Lauf noch ausläuft.
+                    if (id in queued && !cancelled.get()) return START_NOT_STICKY
                     queued += id
                 }
                 MeetingRepository.update(id) {
@@ -252,7 +254,9 @@ class ProcessingService : LifecycleService() {
 
     private fun abort(id: String) {
         MeetingRepository.update(id) {
-            val back = if (it.segments.isNotEmpty() && it.speakers.isNotEmpty()) MeetingStatus.DONE
+            // Nur ein fertiges Protokoll (Neuerstellung abgebrochen) bleibt DONE. Ein Abbruch während
+            // der Transkription hinterlässt sonst ein scheinbar fertiges, aber unvollständiges Protokoll.
+            val back = if (it.segments.isNotEmpty() && it.speakers.isNotEmpty() && !it.summary.isEmpty) MeetingStatus.DONE
             else MeetingStatus.RECORDED
             it.copy(status = back, progress = 0f, progressText = "")
         }

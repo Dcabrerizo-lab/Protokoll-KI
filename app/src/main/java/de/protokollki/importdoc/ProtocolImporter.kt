@@ -31,8 +31,9 @@ object ProtocolImporter {
     /** true, wenn [mime] bzw. der Dateiname ein unterstütztes Dokument ist (statt Audio/Video). */
     fun isDocument(mime: String?, name: String?): Boolean {
         val n = name?.lowercase().orEmpty()
-        return mime in MIME_TYPES || mime?.startsWith("text/") == true ||
-            n.endsWith(".pdf") || n.endsWith(".docx") || n.endsWith(".txt") || n.endsWith(".md")
+        // .doc (altes Word) wird erkannt, damit import() einen verständlichen Hinweis gibt
+        return mime in MIME_TYPES || mime?.startsWith("text/") == true || mime == "application/msword" ||
+            n.endsWith(".doc") || n.endsWith(".pdf") || n.endsWith(".docx") || n.endsWith(".txt") || n.endsWith(".md")
     }
 
     fun isDocument(context: Context, uri: Uri): Boolean =

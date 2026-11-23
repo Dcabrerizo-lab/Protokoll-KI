@@ -1,0 +1,65 @@
+{
+ "scenario": "fallbesprechung",
+ "template": "FALLBESPRECHUNG",
+ "agenda": [],
+ "after": null,
+ "ref": [
+  {
+   "spk": "B",
+   "start": 0.0,
+   "end": 6.42,
+   "text": "Wir besprechen heute Herrn Krüger aus der Lindenstraße zwölf. Er ist seit dem Sturz im Oktober unsicher beim Gehen."
+  },
+  {
+   "spk": "T",
+   "start": 7.26,
+   "end": 13.74,
+   "text": "Seine Tochter hat angerufen, ihre Nummer ist null eins sieben null, eins zwei drei vier fünf sechs sieben. Sie wünscht einen Hausbesuch."
+  },
+  {
+   "spk": "B",
+   "start": 14.29,
+   "end": 18.56,
+   "text": "Meine Einschätzung: Er braucht einen Rollator und wahrscheinlich einen höheren Pflegegrad."
+  },
+  {
+   "spk": "T",
+   "start": 18.98,
+   "end": 24.72,
+   "text": "Dann vereinbaren wir: Frau Schmidt beantragt bis zum zwanzigsten Dezember die Höherstufung bei der Pflegekasse."
+  },
+  {
+   "spk": "B",
+   "start": 25.45,
+   "end": 29.94,
+   "text": "Und Herr Yilmaz organisiert den Rollator über das Sanitätshaus, möglichst diese Woche."
+  },
+  {
+   "spk": "T",
+   "start": 30.41,
+   "end": 33.22,
+   "text": "Überprüfung in vier Wochen in der nächsten Fallbesprechung."
+  }
+ ],
+ "expect": {
+  "speakers": [
+   2,
+   2
+  ],
+  "keywords": [
+   "Krüger",
+   "Rollator"
+  ],
+  "task_owners": [
+   "Schmidt",
+   "Yilmaz"
+  ],
+  "min_tasks": 2,
+  "decisions_any": [],
+  "sensitive_any": [
+   "Krüger",
+   "Lindenstraße"
+  ],
+  "topic_prefix": "Fall"
+ }
+}

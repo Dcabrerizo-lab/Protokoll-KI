@@ -45,6 +45,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import de.protokollki.audio.importAudio
 import de.protokollki.data.AppSettings
+import de.protokollki.data.MeetingRepository
 import de.protokollki.engine.ModelManager
 import de.protokollki.importdoc.ProtocolImporter
 import de.protokollki.service.ProcessingService
@@ -133,6 +134,9 @@ fun AppNavigation(
                 val meeting = withContext(Dispatchers.Default) { importAudio(context, uri) }
                 // Standardvorlage auch für importierte Dateien
                 runCatching { applyTemplate(context, meeting.id, defaultTemplate) }
+                de.protokollki.DebugHooks.consumeAgenda()?.let { agenda ->
+                    MeetingRepository.update(meeting.id) { it.copy(agenda = agenda) }
+                }
                 if (AppSettings.state.value.autoProcess && ModelManager.state.value.installed) {
                     ProcessingService.process(context, meeting.id)
                 }

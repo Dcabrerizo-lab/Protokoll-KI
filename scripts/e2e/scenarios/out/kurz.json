@@ -1,0 +1,9 @@
+{
+ "scenario": "kurz",
+ "template": "ALLGEMEIN",
+ "agenda": [],
+ "ref": [],
+ "expect": {
+  "error": true
+ }
+}

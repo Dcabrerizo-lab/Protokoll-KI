@@ -1,0 +1,99 @@
+{
+ "scenario": "vereinssitzung",
+ "template": "VEREINSSITZUNG",
+ "agenda": [
+  "Begrüßung und Formalien",
+  "Sommerfest",
+  "Mitgliedsbeitrag",
+  "Verschiedenes"
+ ],
+ "after": null,
+ "ref": [
+  {
+   "spk": "P",
+   "start": 0.0,
+   "end": 10.73,
+   "text": "Ich begrüße alle Anwesenden zur Vorstandssitzung des Fördervereins. Wir sind sieben Mitglieder und damit beschlussfähig. Gibt es Einwände gegen die Tagesordnung? Das ist nicht der Fall."
+  },
+  {
+   "spk": "R",
+   "start": 11.52,
+   "end": 18.43,
+   "text": "Zum Sommerfest: Ich schlage vor, das Fest am vierzehnten Juni im Stadtpark zu feiern. Das Budget wären zweitausend Euro."
+  },
+  {
+   "spk": "K",
+   "start": 19.07,
+   "end": 23.35,
+   "text": "Ich finde zweitausend Euro zu viel. Fünfzehnhundert sollten reichen."
+  },
+  {
+   "spk": "E",
+   "start": 23.82,
+   "end": 28.99,
+   "text": "Mit fünfzehnhundert Euro bekommen wir keine Bühne. Ich bin für zweitausend."
+  },
+  {
+   "spk": "P",
+   "start": 29.65,
+   "end": 42.59,
+   "text": "Dann stimmen wir ab: Sommerfest am vierzehnten Juni mit einem Budget von zweitausend Euro. Wer ist dafür? Fünf Stimmen. Wer ist dagegen? Eine Stimme. Enthaltungen? Eine. Damit ist der Antrag angenommen."
+  },
+  {
+   "spk": "T",
+   "start": 43.12,
+   "end": 46.38,
+   "text": "Ich kümmere mich um die Genehmigung beim Ordnungsamt, bis Ende März."
+  },
+  {
+   "spk": "P",
+   "start": 47.07,
+   "end": 54.95,
+   "text": "Danke, Herr Schröder. Nächster Punkt, der Mitgliedsbeitrag. Der Kassenwart schlägt vor, den Beitrag auf vierzig Euro im Jahr zu erhöhen."
+  },
+  {
+   "spk": "R",
+   "start": 55.62,
+   "end": 57.81,
+   "text": "Ich bin dagegen, das schreckt neue Mitglieder ab."
+  },
+  {
+   "spk": "P",
+   "start": 58.45,
+   "end": 67.23,
+   "text": "Wir stimmen ab. Wer ist für die Erhöhung auf vierzig Euro? Zwei Stimmen. Dagegen? Vier. Enthaltung eine. Der Antrag ist abgelehnt."
+  },
+  {
+   "spk": "E",
+   "start": 67.95,
+   "end": 73.71,
+   "text": "Unter Verschiedenes: Ich schreibe bis zum zehnten Januar einen Artikel für die Vereinszeitung."
+  },
+  {
+   "spk": "P",
+   "start": 74.58,
+   "end": 78.16,
+   "text": "Vielen Dank. Ich schließe die Sitzung um zwanzig Uhr dreißig."
+  }
+ ],
+ "expect": {
+  "speakers": [
+   3,
+   5
+  ],
+  "keywords": [
+   "Sommerfest",
+   "Beitrag"
+  ],
+  "task_owners": [
+   "Schröder"
+  ],
+  "min_tasks": 2,
+  "decisions_any": [
+   "angenommen",
+   "abgelehnt"
+  ],
+  "vote_format": true,
+  "agenda_topics": true
+ }
+}

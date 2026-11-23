@@ -9,3 +9,4 @@ app/libs/*.aar
 captures/
 .DS_Store
 build-host/
+__pycache__/

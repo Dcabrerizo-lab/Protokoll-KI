@@ -52,7 +52,7 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
         )
         val sd = OfflineSpeakerDiarization(config = config)
         try {
-            val result = sd.processWithCallback(samples, callback = DiarizationCallback(onProgress))
+            val result = sd.processWithCallback(AudioLevel.normalize(samples), callback = DiarizationCallback(onProgress))
             return result.sortedBy { it.start }.map { Turn(it.start, it.end, it.speaker) }
         } finally {
             sd.release()

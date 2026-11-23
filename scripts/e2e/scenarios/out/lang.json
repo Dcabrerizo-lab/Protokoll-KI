@@ -1,0 +1,287 @@
+{
+ "scenario": "lang",
+ "template": "ALLGEMEIN",
+ "agenda": [],
+ "ref": [
+  {
+   "spk": "T",
+   "start": 0.0,
+   "end": 7.34,
+   "text": "Guten Morgen zusammen. Ich eröffne unsere Teambesprechung. Heute geht es um den Umzug des Pflegedienstes und um die neue Tourenplanung."
+  },
+  {
+   "spk": "B",
+   "start": 7.87,
+   "end": 14.94,
+   "text": "Morgen. Zum Umzug: Der Mietvertrag für das neue Büro in der Hauptstraße ist unterschrieben. Einzug ist am ersten Februar."
+  },
+  {
+   "spk": "K",
+   "start": 15.39,
+   "end": 21.01,
+   "text": "Das ist gut. Wir brauchen dann aber noch neue Möbel und die Telefonanlage muss umgezogen werden."
+  },
+  {
+   "spk": "T",
+   "start": 21.52,
+   "end": 25.89,
+   "text": "Richtig. Frau Becker, können Sie bis Freitag drei Angebote für die Möbel einholen?"
+  },
+  {
+   "spk": "B",
+   "start": 26.43,
+   "end": 29.74,
+   "text": "Ja, das mache ich. Bis Freitag habe ich die Angebote."
+  },
+  {
+   "spk": "T",
+   "start": 30.37,
+   "end": 36.94,
+   "text": "Sehr gut. Herr Wagner, kümmern Sie sich bitte um die Telefonanlage und klären Sie das mit dem Anbieter bis Ende Januar."
+  },
+  {
+   "spk": "K",
+   "start": 37.55,
+   "end": 46.47,
+   "text": "In Ordnung, ich rufe morgen beim Anbieter an. Zur Tourenplanung habe ich noch einen Punkt. Die Touren im Norden sind zu lang, wir verlieren jeden Tag fast eine Stunde."
+  },
+  {
+   "spk": "B",
+   "start": 47.36,
+   "end": 51.59,
+   "text": "Das sehe ich auch so. Wir könnten die Tour Nord teilen und einen zweiten Wagen einsetzen."
+  },
+  {
+   "spk": "T",
+   "start": 52.44,
+   "end": 59.57,
+   "text": "Dann beschließen wir: Ab März wird die Tour Nord in zwei Touren aufgeteilt. Herr Wagner erstellt dafür bis zur nächsten Sitzung einen Entwurf."
+  },
+  {
+   "spk": "K",
+   "start": 60.14,
+   "end": 64.65,
+   "text": "Mache ich. Offen ist noch, ob wir dafür eine zusätzliche Pflegekraft brauchen."
+  },
+  {
+   "spk": "T",
+   "start": 65.09,
+   "end": 70.16,
+   "text": "Das klären wir in der nächsten Sitzung am fünfzehnten Januar. Vielen Dank, dann schließe ich die Besprechung."
+  },
+  {
+   "spk": "P",
+   "start": 70.8053125,
+   "end": 81.5353125,
+   "text": "Ich begrüße alle Anwesenden zur Vorstandssitzung des Fördervereins. Wir sind sieben Mitglieder und damit beschlussfähig. Gibt es Einwände gegen die Tagesordnung? Das ist nicht der Fall."
+  },
+  {
+   "spk": "R",
+   "start": 82.3253125,
+   "end": 89.23531249999999,
+   "text": "Zum Sommerfest: Ich schlage vor, das Fest am vierzehnten Juni im Stadtpark zu feiern. Das Budget wären zweitausend Euro."
+  },
+  {
+   "spk": "K",
+   "start": 89.8753125,
+   "end": 94.15531250000001,
+   "text": "Ich finde zweitausend Euro zu viel. Fünfzehnhundert sollten reichen."
+  },
+  {
+   "spk": "E",
+   "start": 94.6253125,
+   "end": 99.7953125,
+   "text": "Mit fünfzehnhundert Euro bekommen wir keine Bühne. Ich bin für zweitausend."
+  },
+  {
+   "spk": "P",
+   "start": 100.45531249999999,
+   "end": 113.3953125,
+   "text": "Dann stimmen wir ab: Sommerfest am vierzehnten Juni mit einem Budget von zweitausend Euro. Wer ist dafür? Fünf Stimmen. Wer ist dagegen? Eine Stimme. Enthaltungen? Eine. Damit ist der Antrag angenommen."
+  },
+  {
+   "spk": "T",
+   "start": 113.92531249999999,
+   "end": 117.18531250000001,
+   "text": "Ich kümmere mich um die Genehmigung beim Ordnungsamt, bis Ende März."
+  },
+  {
+   "spk": "P",
+   "start": 117.8753125,
+   "end": 125.7553125,
+   "text": "Danke, Herr Schröder. Nächster Punkt, der Mitgliedsbeitrag. Der Kassenwart schlägt vor, den Beitrag auf vierzig Euro im Jahr zu erhöhen."
+  },
+  {
+   "spk": "R",
+   "start": 126.42531249999999,
+   "end": 128.61531250000002,
+   "text": "Ich bin dagegen, das schreckt neue Mitglieder ab."
+  },
+  {
+   "spk": "P",
+   "start": 129.2553125,
+   "end": 138.0353125,
+   "text": "Wir stimmen ab. Wer ist für die Erhöhung auf vierzig Euro? Zwei Stimmen. Dagegen? Vier. Enthaltung eine. Der Antrag ist abgelehnt."
+  },
+  {
+   "spk": "E",
+   "start": 138.7553125,
+   "end": 144.5153125,
+   "text": "Unter Verschiedenes: Ich schreibe bis zum zehnten Januar einen Artikel für die Vereinszeitung."
+  },
+  {
+   "spk": "P",
+   "start": 145.3853125,
+   "end": 148.96531249999998,
+   "text": "Vielen Dank. Ich schließe die Sitzung um zwanzig Uhr dreißig."
+  },
+  {
+   "spk": "B",
+   "start": 149.63575,
+   "end": 156.05575,
+   "text": "Wir besprechen heute Herrn Krüger aus der Lindenstraße zwölf. Er ist seit dem Sturz im Oktober unsicher beim Gehen."
+  },
+  {
+   "spk": "T",
+   "start": 156.89575,
+   "end": 163.37575,
+   "text": "Seine Tochter hat angerufen, ihre Nummer ist null eins sieben null, eins zwei drei vier fünf sechs sieben. Sie wünscht einen Hausbesuch."
+  },
+  {
+   "spk": "B",
+   "start": 163.92575,
+   "end": 168.19575,
+   "text": "Meine Einschätzung: Er braucht einen Rollator und wahrscheinlich einen höheren Pflegegrad."
+  },
+  {
+   "spk": "T",
+   "start": 168.61575,
+   "end": 174.35575,
+   "text": "Dann vereinbaren wir: Frau Schmidt beantragt bis zum zwanzigsten Dezember die Höherstufung bei der Pflegekasse."
+  },
+  {
+   "spk": "B",
+   "start": 175.08575,
+   "end": 179.57575,
+   "text": "Und Herr Yilmaz organisiert den Rollator über das Sanitätshaus, möglichst diese Woche."
+  },
+  {
+   "spk": "T",
+   "start": 180.04575,
+   "end": 182.85575,
+   "text": "Überprüfung in vier Wochen in der nächsten Fallbesprechung."
+  },
+  {
+   "spk": "T",
+   "start": 183.2720625,
+   "end": 190.6120625,
+   "text": "Guten Morgen zusammen. Ich eröffne unsere Teambesprechung. Heute geht es um den Umzug des Pflegedienstes und um die neue Tourenplanung."
+  },
+  {
+   "spk": "B",
+   "start": 191.1420625,
+   "end": 198.2120625,
+   "text": "Morgen. Zum Umzug: Der Mietvertrag für das neue Büro in der Hauptstraße ist unterschrieben. Einzug ist am ersten Februar."
+  },
+  {
+   "spk": "K",
+   "start": 198.6620625,
+   "end": 204.2820625,
+   "text": "Das ist gut. Wir brauchen dann aber noch neue Möbel und die Telefonanlage muss umgezogen werden."
+  },
+  {
+   "spk": "T",
+   "start": 204.79206250000001,
+   "end": 209.1620625,
+   "text": "Richtig. Frau Becker, können Sie bis Freitag drei Angebote für die Möbel einholen?"
+  },
+  {
+   "spk": "B",
+   "start": 209.7020625,
+   "end": 213.0120625,
+   "text": "Ja, das mache ich. Bis Freitag habe ich die Angebote."
+  },
+  {
+   "spk": "T",
+   "start": 213.6420625,
+   "end": 220.2120625,
+   "text": "Sehr gut. Herr Wagner, kümmern Sie sich bitte um die Telefonanlage und klären Sie das mit dem Anbieter bis Ende Januar."
+  },
+  {
+   "spk": "K",
+   "start": 220.82206250000002,
+   "end": 229.7420625,
+   "text": "In Ordnung, ich rufe morgen beim Anbieter an. Zur Tourenplanung habe ich noch einen Punkt. Die Touren im Norden sind zu lang, wir verlieren jeden Tag fast eine Stunde."
+  },
+  {
+   "spk": "B",
+   "start": 230.63206250000002,
+   "end": 234.8620625,
+   "text": "Das sehe ich auch so. Wir könnten die Tour Nord teilen und einen zweiten Wagen einsetzen."
+  },
+  {
+   "spk": "T",
+   "start": 235.7120625,
+   "end": 242.8420625,
+   "text": "Dann beschließen wir: Ab März wird die Tour Nord in zwei Touren aufgeteilt. Herr Wagner erstellt dafür bis zur nächsten Sitzung einen Entwurf."
+  },
+  {
+   "spk": "K",
+   "start": 243.4120625,
+   "end": 247.9220625,
+   "text": "Mache ich. Offen ist noch, ob wir dafür eine zusätzliche Pflegekraft brauchen."
+  },
+  {
+   "spk": "T",
+   "start": 248.3620625,
+   "end": 253.4320625,
+   "text": "Das klären wir in der nächsten Sitzung am fünfzehnten Januar. Vielen Dank, dann schließe ich die Besprechung."
+  },
+  {
+   "spk": "E",
+   "start": 254.07737500000002,
+   "end": 261.407375,
+   "text": "Übergabe vom Frühdienst an den Spätdienst. Frau Lehmann in Zimmer drei hat heute wenig getrunken, bitte auf Flüssigkeit achten."
+  },
+  {
+   "spk": "R",
+   "start": 261.87737500000003,
+   "end": 263.80737500000004,
+   "text": "Verstanden. Wie geht es Herrn Becker?"
+  },
+  {
+   "spk": "E",
+   "start": 264.48737500000004,
+   "end": 271.077375,
+   "text": "Herr Becker hatte heute Morgen leichtes Fieber, achtunddreißig Komma eins. Der Hausarzt kommt um sechzehn Uhr."
+  },
+  {
+   "spk": "R",
+   "start": 271.42737500000004,
+   "end": 275.387375,
+   "text": "Gut, ich messe um vierzehn Uhr noch einmal Fieber und gebe dem Arzt den Wert."
+  },
+  {
+   "spk": "E",
+   "start": 276.157375,
+   "end": 280.657375,
+   "text": "Allgemein: Die Medikamentenlieferung kommt morgen früh, bitte annehmen."
+  }
+ ],
+ "expect": {
+  "speakers": [
+   3,
+   8
+  ],
+  "keywords": [
+   "Sommerfest",
+   "Tour",
+   "Rollator"
+  ],
+  "task_owners": [
+   "Becker"
+  ],
+  "min_tasks": 4,
+  "decisions_any": []
+ }
+}

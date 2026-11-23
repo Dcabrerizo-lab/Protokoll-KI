@@ -16,6 +16,9 @@ android {
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "1.0.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
 
+        // Instrumentierte Tests auf dem Gerät/Emulator (app/src/androidTest)
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         // Standard: nur arm64 (alle aktuellen Handys). Für den Emulator-Test: -Ppk.abis=x86_64
         val abis = (project.findProperty("pk.abis") as String?) ?: "arm64-v8a"
         ndk { abiFilters += abis.split(",") }
@@ -76,9 +79,26 @@ android {
 
     buildFeatures { compose = true }
 
+    // Testaufnahme (scripts/e2e/meeting.wav) als Asset NUR in der Test-APK, nicht in der App
+    sourceSets {
+        getByName("androidTest") {
+            assets.srcDir("../scripts/e2e")
+        }
+    }
+
+    testOptions {
+        // Für connectedAndroidTest: Systemanimationen aus (stabilere Compose-Tests)
+        animationsDisabled = true
+    }
+
     packaging {
         jniLibs { useLegacyPackaging = true }
-        resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // doppelte Lizenzdateien aus Test-Bibliotheken (nur Test-APK betroffen)
+            excludes += "/META-INF/LICENSE.md"
+            excludes += "/META-INF/LICENSE-notice.md"
+        }
     }
 }
 
@@ -117,4 +137,14 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+
+    // Instrumentierte Tests (Emulator/Gerät): ./gradlew connectedDebugAndroidTest
+    androidTestImplementation(composeBom)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("junit:junit:4.13.2")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

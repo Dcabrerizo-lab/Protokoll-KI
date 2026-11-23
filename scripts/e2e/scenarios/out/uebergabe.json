@@ -1,0 +1,51 @@
+{
+ "scenario": "uebergabe",
+ "template": "UEBERGABE",
+ "agenda": [],
+ "after": null,
+ "ref": [
+  {
+   "spk": "E",
+   "start": 0.0,
+   "end": 7.33,
+   "text": "Übergabe vom Frühdienst an den Spätdienst. Frau Lehmann in Zimmer drei hat heute wenig getrunken, bitte auf Flüssigkeit achten."
+  },
+  {
+   "spk": "R",
+   "start": 7.8,
+   "end": 9.73,
+   "text": "Verstanden. Wie geht es Herrn Becker?"
+  },
+  {
+   "spk": "E",
+   "start": 10.41,
+   "end": 17.0,
+   "text": "Herr Becker hatte heute Morgen leichtes Fieber, achtunddreißig Komma eins. Der Hausarzt kommt um sechzehn Uhr."
+  },
+  {
+   "spk": "R",
+   "start": 17.35,
+   "end": 21.31,
+   "text": "Gut, ich messe um vierzehn Uhr noch einmal Fieber und gebe dem Arzt den Wert."
+  },
+  {
+   "spk": "E",
+   "start": 22.08,
+   "end": 26.58,
+   "text": "Allgemein: Die Medikamentenlieferung kommt morgen früh, bitte annehmen."
+  }
+ ],
+ "expect": {
+  "speakers": [
+   2,
+   2
+  ],
+  "keywords": [
+   "Lehmann",
+   "Fieber"
+  ],
+  "task_owners": [],
+  "min_tasks": 1,
+  "decisions_any": []
+ }
+}

@@ -1,0 +1,93 @@
+{
+ "scenario": "drei_personen",
+ "template": "ALLGEMEIN",
+ "agenda": [],
+ "after": null,
+ "ref": [
+  {
+   "spk": "T",
+   "start": 0.0,
+   "end": 7.34,
+   "text": "Guten Morgen zusammen. Ich eröffne unsere Teambesprechung. Heute geht es um den Umzug des Pflegedienstes und um die neue Tourenplanung."
+  },
+  {
+   "spk": "B",
+   "start": 7.87,
+   "end": 14.94,
+   "text": "Morgen. Zum Umzug: Der Mietvertrag für das neue Büro in der Hauptstraße ist unterschrieben. Einzug ist am ersten Februar."
+  },
+  {
+   "spk": "K",
+   "start": 15.39,
+   "end": 21.01,
+   "text": "Das ist gut. Wir brauchen dann aber noch neue Möbel und die Telefonanlage muss umgezogen werden."
+  },
+  {
+   "spk": "T",
+   "start": 21.52,
+   "end": 25.89,
+   "text": "Richtig. Frau Becker, können Sie bis Freitag drei Angebote für die Möbel einholen?"
+  },
+  {
+   "spk": "B",
+   "start": 26.43,
+   "end": 29.74,
+   "text": "Ja, das mache ich. Bis Freitag habe ich die Angebote."
+  },
+  {
+   "spk": "T",
+   "start": 30.37,
+   "end": 36.94,
+   "text": "Sehr gut. Herr Wagner, kümmern Sie sich bitte um die Telefonanlage und klären Sie das mit dem Anbieter bis Ende Januar."
+  },
+  {
+   "spk": "K",
+   "start": 37.55,
+   "end": 46.47,
+   "text": "In Ordnung, ich rufe morgen beim Anbieter an. Zur Tourenplanung habe ich noch einen Punkt. Die Touren im Norden sind zu lang, wir verlieren jeden Tag fast eine Stunde."
+  },
+  {
+   "spk": "B",
+   "start": 47.36,
+   "end": 51.59,
+   "text": "Das sehe ich auch so. Wir könnten die Tour Nord teilen und einen zweiten Wagen einsetzen."
+  },
+  {
+   "spk": "T",
+   "start": 52.44,
+   "end": 59.57,
+   "text": "Dann beschließen wir: Ab März wird die Tour Nord in zwei Touren aufgeteilt. Herr Wagner erstellt dafür bis zur nächsten Sitzung einen Entwurf."
+  },
+  {
+   "spk": "K",
+   "start": 60.14,
+   "end": 64.65,
+   "text": "Mache ich. Offen ist noch, ob wir dafür eine zusätzliche Pflegekraft brauchen."
+  },
+  {
+   "spk": "T",
+   "start": 65.09,
+   "end": 70.16,
+   "text": "Das klären wir in der nächsten Sitzung am fünfzehnten Januar. Vielen Dank, dann schließe ich die Besprechung."
+  }
+ ],
+ "expect": {
+  "speakers": [
+   3,
+   3
+  ],
+  "keywords": [
+   "Umzug",
+   "Tour"
+  ],
+  "task_owners": [
+   "Becker",
+   "Wagner"
+  ],
+  "min_tasks": 2,
+  "decisions_any": [
+   "März",
+   "Tour"
+  ]
+ }
+}

@@ -129,7 +129,12 @@ class MainActivity : ComponentActivity() {
         val debuggable = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
         if (debuggable && intent.action == "de.protokollki.DEBUG_IMPORT") {
             intent.getStringExtra("model_set")?.let { de.protokollki.engine.ModelManager.selectSet(it) }
-            de.protokollki.data.AppSettings.update { it.copy(onboardingDone = true, autoProcess = true) }
+            val template = de.protokollki.data.ProtocolTemplate.of(intent.getStringExtra("template"))
+            de.protokollki.data.AppSettings.update {
+                it.copy(onboardingDone = true, autoProcess = true, defaultTemplate = template)
+            }
+            DebugHooks.pendingAgenda = intent.getStringExtra("agenda")
+                ?.split("|")?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() }
             intent.getStringExtra("path")?.let { sharedUri.value = Uri.fromFile(java.io.File(it)) }
             return
         }

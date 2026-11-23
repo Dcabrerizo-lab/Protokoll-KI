@@ -142,6 +142,7 @@ class ProtocolGenerator(private val model: TextModel) {
         val summary = if (wantSummary) parseSummary(raws.first(), n) else Summary()
         val tasks = raws.flatMap { parseTasks(it, n) }
             .map { it.copy(due = DateResolver.resolve(it.due, meetingDate)) }
+            .map { it.copy(owner = resolveOwner(it.owner, it.ref, segments, ::nameOf)) }
         val doneKeys = mutableMapOf<String, Int>()
         raws.forEach { r -> parseCompleted(r, n).forEach { (k, ref) -> doneKeys.putIfAbsent(k, ref) } }
         val completed = openTasks.filter { it.key in doneKeys }
@@ -271,6 +272,30 @@ thema ::= "{" ws "\"titel\":" ws string ws "," ws "\"punkte\":" ws strlist ws "}
         val TASKS_GRAMMAR = """
 root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
 """.trimIndent() + "\n" + JSON_STRING
+
+        private val ADDRESS = Regex("\\b(Frau|Herr|Herrn)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})")
+        private val GENERIC = Regex("^(Person \\d+|offen|unklar|alle|team|)$", RegexOption.IGNORE_CASE)
+
+        /**
+         * Kleine Modelle setzen als Verantwortliche oft die Sprecherbezeichnung ("Person 2") statt des
+         * angesprochenen Namens. Steht im Beleg oder im Satz davor eine Anrede ("Frau Becker, können
+         * Sie …"), die eine andere Person an diese richtet, wird dieser Name übernommen.
+         */
+        internal fun resolveOwner(owner: String, ref: Int, segments: List<Segment>,
+                                  nameOf: (Int) -> String): String {
+            val o = owner.trim()
+            if (!GENERIC.matches(o) || ref !in segments.indices) return owner
+            for (i in listOf(ref, ref - 1)) {
+                val seg = segments.getOrNull(i) ?: continue
+                val m = ADDRESS.find(seg.text) ?: continue
+                val title = if (m.groupValues[1] == "Herrn") "Herr" else m.groupValues[1]
+                val name = "$title ${m.groupValues[2]}"
+                // Wer spricht, meint mit der Anrede jemand anderen
+                if (nameOf(seg.speakerId).equals(name, ignoreCase = true)) continue
+                return name
+            }
+            return owner
+        }
 
         // ------------------------------------------------------------ Parsing
 

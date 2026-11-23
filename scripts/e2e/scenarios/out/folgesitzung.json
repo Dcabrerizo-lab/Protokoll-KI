@@ -1,0 +1,56 @@
+{
+ "scenario": "folgesitzung",
+ "template": "ALLGEMEIN",
+ "agenda": [],
+ "after": "drei_personen",
+ "ref": [
+  {
+   "spk": "T",
+   "start": 0.0,
+   "end": 3.63,
+   "text": "Willkommen zur Folgesitzung. Wir schauen zuerst auf die offenen Aufgaben."
+  },
+  {
+   "spk": "B",
+   "start": 4.12,
+   "end": 9.67,
+   "text": "Die drei Angebote für die Möbel liegen vor, das ist erledigt. Das günstigste kommt von der Firma Holzmann."
+  },
+  {
+   "spk": "T",
+   "start": 10.12,
+   "end": 14.84,
+   "text": "Danke. Dann bestellen wir bei Holzmann. Herr Wagner, wie sieht es mit der Telefonanlage aus?"
+  },
+  {
+   "spk": "K",
+   "start": 15.19,
+   "end": 18.88,
+   "text": "Da warte ich noch auf den Rückruf vom Anbieter. Das ist noch offen."
+  },
+  {
+   "spk": "T",
+   "start": 19.52,
+   "end": 23.48,
+   "text": "Gut, dann bleibt das bei Ihnen. Frau Becker, bitte bestellen Sie die Möbel bis Montag."
+  }
+ ],
+ "expect": {
+  "speakers": [
+   3,
+   3
+  ],
+  "keywords": [
+   "Angebote",
+   "Holzmann"
+  ],
+  "task_owners": [
+   "Becker"
+  ],
+  "min_tasks": 1,
+  "decisions_any": [
+   "Holzmann"
+  ],
+  "completed_tasks_min": 1
+ }
+}
