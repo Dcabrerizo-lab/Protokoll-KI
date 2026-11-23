@@ -9,6 +9,29 @@ enum class ProtocolMode(val label: String) {
     WORT("Wortprotokoll"),
 }
 
+/** Protokollvorlage: steuert Gliederung, Formulierungen und das Unterschriftsfeld im Export. */
+enum class ProtocolTemplate(
+    val label: String,
+    val description: String,
+    val documentTitle: String,
+    val signatures: List<String>,
+) {
+    ALLGEMEIN("Allgemein", "Für jede Art von Besprechung", "Ergebnisprotokoll", emptyList()),
+    DIENSTBESPRECHUNG("Dienstbesprechung", "Team, Organisation, Termine", "Protokoll der Dienstbesprechung",
+        listOf("Protokollführung", "Leitung")),
+    FALLBESPRECHUNG("Fallbesprechung", "Je Fall: Lage, Einschätzung, Maßnahmen", "Protokoll der Fallbesprechung",
+        listOf("Protokollführung", "Fallverantwortliche Fachkraft")),
+    UEBERGABE("Übergabe", "Schicht- oder Dienstübergabe je Person", "Übergabeprotokoll",
+        listOf("Übergebende Fachkraft", "Übernehmende Fachkraft")),
+    VEREINSSITZUNG("Vereinssitzung", "TOPs, Abstimmungen, Beschlussfähigkeit", "Sitzungsprotokoll",
+        listOf("Sitzungsleitung", "Protokollführung"));
+
+    companion object {
+        fun of(name: String?): ProtocolTemplate =
+            entries.firstOrNull { it.name == name } ?: ALLGEMEIN
+    }
+}
+
 enum class MeetingStatus {
     RECORDING,      // Aufnahme läuft
     RECORDED,       // Audio vorhanden, noch nicht verarbeitet
@@ -93,6 +116,11 @@ data class Meeting(
     val followUps: List<FollowUp> = emptyList(),    // Stand offener Aufgaben aus früheren Sitzungen
     val sensitiveTerms: List<String> = emptyList(), // zu schwärzende Begriffe (Klientennamen usw.)
     val audioDeleted: Boolean = false,              // Audio per Löschfrist entfernt
+    val template: ProtocolTemplate = ProtocolTemplate.ALLGEMEIN,
+    val location: String = "",                      // Ort (für formale Protokolle)
+    val chair: String = "",                         // Sitzungsleitung / Leitung
+    val minuteTaker: String = "",                   // Protokollführung
+    val importedFrom: String? = null,               // Dateiname, wenn aus altem Protokoll (PDF/Word/Text) importiert
 ) {
     fun speakerName(id: Int): String =
         speakers.firstOrNull { it.id == id }?.name ?: "Person ${id + 1}"
@@ -119,6 +147,9 @@ fun Meeting.toJson(): JSONObject = JSONObject().apply {
     put("agenda", agenda.toJson())
     put("sensitiveTerms", sensitiveTerms.toJson())
     put("audioDeleted", audioDeleted)
+    put("template", template.name)
+    put("location", location); put("chair", chair); put("minuteTaker", minuteTaker)
+    put("importedFrom", importedFrom)
     put("followUps", JSONArray().also { a ->
         followUps.forEach {
             a.put(JSONObject().put("taskId", it.taskId).put("meetingId", it.meetingId)
@@ -210,6 +241,11 @@ fun meetingFromJson(o: JSONObject): Meeting {
         agenda = o.optJSONArray("agenda").strings(),
         sensitiveTerms = o.optJSONArray("sensitiveTerms").strings(),
         audioDeleted = o.optBoolean("audioDeleted", false),
+        template = ProtocolTemplate.of(o.optString("template", "")),
+        location = o.optString("location", ""),
+        chair = o.optString("chair", ""),
+        minuteTaker = o.optString("minuteTaker", ""),
+        importedFrom = if (o.isNull("importedFrom")) null else o.optString("importedFrom"),
         followUps = (o.optJSONArray("followUps") ?: JSONArray()).let { a ->
             (0 until a.length()).map {
                 val f = a.getJSONObject(it)

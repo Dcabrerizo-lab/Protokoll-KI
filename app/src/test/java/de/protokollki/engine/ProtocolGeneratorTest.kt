@@ -1,5 +1,6 @@
 package de.protokollki.engine
 
+import de.protokollki.data.ProtocolTemplate
 import de.protokollki.data.Segment
 import de.protokollki.data.Speaker
 import org.junit.Assert.assertEquals
@@ -99,5 +100,53 @@ class ProtocolGeneratorTest {
         } catch (e: LlmException) {
             assertEquals(0, model.prompts.size)
         }
+    }
+
+    @Test
+    fun templateAndVocabularyReachThePrompt() {
+        val model = FakeModel { _, _ -> summaryJson }
+        ProtocolGenerator(model).generate(
+            "Vorstand", monday, segments, speakers, wantSummary = true,
+            template = ProtocolTemplate.VEREINSSITZUNG,
+            vocabulary = listOf("Kowalczyk", "SGB XI"),
+        ) { _, _ -> true }
+        val prompt = model.prompts.single()
+        assertTrue(prompt.contains("Art: Vereinssitzung"))
+        assertTrue(prompt.contains("Abstimmung: X Ja, Y Nein, Z Enthaltungen"))
+        assertTrue(prompt.contains("Richtige Schreibweise von Namen und Fachbegriffen: Kowalczyk, SGB XI"))
+    }
+
+    @Test
+    fun everyTemplateExceptGeneralHasRules() {
+        ProtocolTemplate.entries.forEach { t ->
+            val rule = ProtocolGenerator.templateRule(t)
+            if (t == ProtocolTemplate.ALLGEMEIN) assertEquals(null, rule)
+            else assertTrue("Regel fehlt: $t", !rule.isNullOrBlank())
+        }
+        val general = ProtocolGenerator.extraRules(false, false)
+        assertTrue(!general.contains("Vorlage"))
+    }
+
+    @Test
+    fun generalTemplateKeepsPromptUnchanged() {
+        val model = FakeModel { _, _ -> summaryJson }
+        ProtocolGenerator(model).generate("Team", monday, segments, speakers, wantSummary = true) { _, _ -> true }
+        assertTrue(!model.prompts.single().contains("Art:"))
+        assertTrue(!model.prompts.single().contains("Richtige Schreibweise"))
+    }
+
+    @Test
+    fun missingTasksTriggerDedicatedTaskPass() {
+        val noTasks = summaryJson.replace(
+            """[{"aufgabe": "Drei Angebote einholen [0]", "verantwortlich": "Frau Becker", "frist": "Freitag"}]""", "[]")
+        assertTrue(noTasks != summaryJson)
+        val model = FakeModel { _, grammar ->
+            if (grammar!!.contains("zusammenfassung")) noTasks
+            else """{"aufgaben": [{"aufgabe": "Drei Angebote einholen [0]", "verantwortlich": "Frau Becker", "frist": "Freitag"}], "erledigte_aufgaben": [], "sensible_daten": []}"""
+        }
+        val r = ProtocolGenerator(model).generate("Team", monday, segments, speakers, wantSummary = true) { _, _ -> true }
+        assertEquals(2, model.prompts.size)
+        assertEquals("Kurz.", r.summary.overview)
+        assertEquals(listOf("Drei Angebote einholen"), r.tasks.map { it.text })
     }
 }

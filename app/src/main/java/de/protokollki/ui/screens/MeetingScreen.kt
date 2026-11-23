@@ -42,6 +42,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MoreVert
@@ -50,6 +52,7 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -92,8 +95,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
@@ -105,6 +110,13 @@ import de.protokollki.data.Meeting
 import de.protokollki.data.MeetingRepository
 import de.protokollki.data.MeetingStatus
 import de.protokollki.data.ProtocolMode
+import de.protokollki.data.ProtocolTemplate
+import de.protokollki.export.chairRole
+import de.protokollki.export.isFormal
+import de.protokollki.ui.components.TemplateChip
+import de.protokollki.ui.components.TemplateSheet
+import de.protokollki.ui.components.applyTemplate
+import de.protokollki.ui.components.templateIcon
 import de.protokollki.data.Segment
 import de.protokollki.engine.ModelManager
 import de.protokollki.engine.VoiceProfiles
@@ -129,7 +141,9 @@ import de.protokollki.ui.components.speakersOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 private const val TAB_SUMMARY = "summary"
 private const val TAB_TRANSCRIPT = "transcript"
@@ -143,6 +157,7 @@ fun MeetingScreen(
     onOpenSettings: () -> Unit = {},
     initialTab: String? = null,
     onOpenMeeting: (String) -> Unit = {},
+    initialSegment: Int = -1,
 ) {
     val meetings by MeetingRepository.meetings.collectAsStateWithLifecycle()
     val meeting = meetings.firstOrNull { it.id == meetingId }
@@ -176,8 +191,9 @@ fun MeetingScreen(
         onBack = leave,
         onOpenRecording = onOpenRecording,
         onOpenSettings = onOpenSettings,
-        initialTab = initialTab,
+        initialTab = if (initialSegment >= 0) TAB_TRANSCRIPT else initialTab,
         onOpenMeeting = onOpenMeeting,
+        initialSegment = initialSegment,
     )
 }
 
@@ -190,6 +206,7 @@ private fun MeetingContent(
     onOpenSettings: () -> Unit,
     initialTab: String?,
     onOpenMeeting: (String) -> Unit,
+    initialSegment: Int = -1,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -208,6 +225,8 @@ private fun MeetingContent(
     var anonymized by rememberSaveable { mutableStateOf(false) }
     var showAgenda by remember { mutableStateOf(false) }
     var showSensitive by remember { mutableStateOf(false) }
+    var showTemplates by remember { mutableStateOf(false) }
+    var segmentHandled by rememberSaveable(m.id) { mutableStateOf(false) }
     var quoteRef by remember { mutableStateOf<Int?>(null) }
     var lastQuote by remember { mutableIntStateOf(-1) }
     var highlightRef by remember { mutableIntStateOf(-1) }
@@ -270,6 +289,27 @@ private fun MeetingContent(
                 duration = SnackbarDuration.Long,
             )
             if (r == SnackbarResult.ActionPerformed) regenerate()
+        }
+    }
+
+    fun changeTemplate(t: ProtocolTemplate) {
+        if (t == m.template) return
+        val hasProtocol = !m.summary.isEmpty || m.tasks.isNotEmpty()
+        val offer = hasProtocol && canRegenerate
+        applyTemplate(context, m.id, t)
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            if (offer) {
+                val r = snackbar.showSnackbar(
+                    message = "Vorlage „${t.label}“ gewählt. Protokoll danach neu gliedern?",
+                    actionLabel = "Protokoll neu erstellen",
+                    withDismissAction = true,
+                    duration = SnackbarDuration.Long,
+                )
+                if (r == SnackbarResult.ActionPerformed) regenerate()
+            } else {
+                snackbar.showSnackbar("Vorlage „${t.label}“ gewählt.")
+            }
         }
     }
 
@@ -339,6 +379,26 @@ private fun MeetingContent(
         }
     }
     val selectedTab = if (selectedTabKey in tabs) selectedTabKey else tabs.first()
+
+    // Sprung aus „Fragen an alle Besprechungen“: Transkript an der Fundstelle öffnen und abspielen
+    val currentPlayer by rememberUpdatedState(player)
+    LaunchedEffect(m.id, initialSegment) {
+        if (segmentHandled || initialSegment < 0) return@LaunchedEffect
+        val seg = m.segments.getOrNull(initialSegment) ?: return@LaunchedEffect
+        segmentHandled = true
+        delay(250)
+        showInTranscript(initialSegment)
+        if (!m.audioDeleted) {
+            val ready = withTimeoutOrNull(4000) {
+                snapshotFlow { currentPlayer?.ready == true }.first { it }
+            }
+            val p = currentPlayer
+            if (ready == true && p != null) {
+                if (ReadAloud.state.value.active) ReadAloud.pause()
+                p.playFrom(seg.start)
+            }
+        }
+    }
     val openTasks = m.tasks.count { !it.done }
     val hasContent = m.segments.isNotEmpty() || m.status == MeetingStatus.DONE
 
@@ -456,9 +516,27 @@ private fun MeetingContent(
                                     leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
                                     onClick = { menuOpen = false; showTitleDialog = true },
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("Vorlage ändern") },
+                                    leadingIcon = { Icon(templateIcon(m.template), contentDescription = null) },
+                                    trailingIcon = {
+                                        Text(
+                                            m.template.label,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    },
+                                    enabled = !busy,
+                                    onClick = { menuOpen = false; showTemplates = true },
+                                )
                                 if (canEditAgenda) {
                                     DropdownMenuItem(
-                                        text = { Text("Tagesordnung bearbeiten") },
+                                        text = {
+                                            Text(
+                                                if (m.template.isFormal) "Sitzungsdaten & Tagesordnung"
+                                                else "Tagesordnung bearbeiten"
+                                            )
+                                        },
                                         leadingIcon = { Icon(Icons.Filled.FormatListNumbered, contentDescription = null) },
                                         onClick = { menuOpen = false; showAgenda = true },
                                     )
@@ -479,7 +557,8 @@ private fun MeetingContent(
                                 DropdownMenuItem(
                                     text = { Text("Neu transkribieren") },
                                     leadingIcon = { Icon(Icons.Filled.GraphicEq, contentDescription = null) },
-                                    enabled = !busy && ms.installed && m.status != MeetingStatus.RECORDING,
+                                    enabled = !busy && ms.installed && m.status != MeetingStatus.RECORDING &&
+                                        m.importedFrom == null && !m.audioDeleted,
                                     onClick = { menuOpen = false; showCountDialog = true },
                                 )
                                 HorizontalDivider()
@@ -522,7 +601,12 @@ private fun MeetingContent(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item(key = "header") {
-                MeetingHeader(m = m, onSpeakerClick = { speakerToEdit = it })
+                MeetingHeader(
+                    m = m,
+                    onSpeakerClick = { speakerToEdit = it },
+                    onTemplateClick = if (busy) null else ({ showTemplates = true }),
+                    onDetailsClick = { showAgenda = true },
+                )
             }
             item(key = "mode") {
                 ModeSelector(
@@ -569,8 +653,11 @@ private fun MeetingContent(
                                             Text(
                                                 when (key) {
                                                     TAB_SUMMARY -> "Zusammenfassung"
-                                                    TAB_TRANSCRIPT ->
-                                                        if (m.mode == ProtocolMode.WORT) "Wortprotokoll" else "Transkript"
+                                                    TAB_TRANSCRIPT -> when {
+                                                        m.importedFrom != null -> "Originaltext"
+                                                        m.mode == ProtocolMode.WORT -> "Wortprotokoll"
+                                                        else -> "Transkript"
+                                                    }
                                                     else -> "Aufgaben"
                                                 },
                                                 maxLines = 1,
@@ -744,6 +831,17 @@ private fun MeetingContent(
         )
     }
 
+    if (showTemplates) {
+        TemplateSheet(
+            selected = m.template,
+            onSelect = { t ->
+                showTemplates = false
+                changeTemplate(t)
+            },
+            onDismiss = { showTemplates = false },
+        )
+    }
+
     if (showSensitive) {
         SensitiveTermsSheet(
             meetingId = m.id,
@@ -797,7 +895,12 @@ private fun MeetingContent(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MeetingHeader(m: Meeting, onSpeakerClick: (Int) -> Unit) {
+private fun MeetingHeader(
+    m: Meeting,
+    onSpeakerClick: (Int) -> Unit,
+    onTemplateClick: (() -> Unit)?,
+    onDetailsClick: () -> Unit,
+) {
     val speakers = remember(m.speakers, m.segments) { speakersOf(m) }
     val recognized = remember(m.speakers) { m.speakers.filter { it.profileId != null }.map { it.id }.toSet() }
     val shares = remember(m.segments) {
@@ -808,16 +911,55 @@ private fun MeetingHeader(m: Meeting, onSpeakerClick: (Int) -> Unit) {
         }
     }
     Column(Modifier.padding(horizontal = 20.dp)) {
+        TemplateChip(template = m.template, onClick = onTemplateClick)
+        Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             MetaItem(Icons.Filled.CalendarToday, formatDate(m.createdAt))
             MetaItem(Icons.Filled.Schedule, formatTime(m.createdAt))
-            if (m.durationSec > 0f) MetaItem(Icons.Filled.Timer, formatDurationWords(m.durationSec))
+            if (m.importedFrom == null && m.durationSec > 0f) {
+                MetaItem(Icons.Filled.Timer, formatDurationWords(m.durationSec))
+            }
         }
-        if (m.audioDeleted) {
+        if (m.importedFrom != null) {
+            Spacer(Modifier.height(6.dp))
+            MetaItem(Icons.Filled.UploadFile, "Importiert · ${m.importedFrom}")
+        } else if (m.audioDeleted) {
             Spacer(Modifier.height(6.dp))
             MetaItem(Icons.Filled.DeleteSweep, "Audio per Löschfrist entfernt – Transkript bleibt erhalten")
         }
-        if (speakers.isNotEmpty()) {
+        if (m.template.isFormal) {
+            Spacer(Modifier.height(4.dp))
+            val details = listOfNotNull(
+                m.location.trim().takeIf { it.isNotEmpty() },
+                m.chair.trim().takeIf { it.isNotEmpty() }?.let { "${chairRole(m.template)}: $it" },
+                m.minuteTaker.trim().takeIf { it.isNotEmpty() }?.let { "Protokoll: $it" },
+            )
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onDetailsClick)
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (details.isEmpty()) {
+                    Icon(
+                        Icons.Filled.EditNote, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "Ort, Leitung und Protokollführung ergänzen",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    MetaItem(Icons.Filled.Place, details.joinToString(" · "))
+                }
+            }
+        }
+        // Importierte Protokolle haben keine echten Sprecher (nur „Protokoll“): nichts umzubenennen
+        if (speakers.isNotEmpty() && m.importedFrom == null) {
             Spacer(Modifier.height(14.dp))
             Text(
                 "Teilnehmende · zum Umbenennen antippen",

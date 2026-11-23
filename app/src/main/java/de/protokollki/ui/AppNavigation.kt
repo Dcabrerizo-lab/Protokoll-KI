@@ -46,7 +46,10 @@ import androidx.navigation.navArgument
 import de.protokollki.audio.importAudio
 import de.protokollki.data.AppSettings
 import de.protokollki.engine.ModelManager
+import de.protokollki.importdoc.ProtocolImporter
 import de.protokollki.service.ProcessingService
+import de.protokollki.ui.components.applyTemplate
+import de.protokollki.ui.screens.AskScreen
 import de.protokollki.ui.screens.HomeScreen
 import de.protokollki.ui.screens.MeetingScreen
 import de.protokollki.ui.screens.OnboardingScreen
@@ -64,10 +67,19 @@ object Routes {
     const val RECORDING = "recording"
     const val SETTINGS = "settings"
     const val VOICES = "voices"
-    const val MEETING = "meeting/{id}?tab={tab}"
-    /** [tab]: optional „tasks“, „transcript“ oder „summary“ – öffnet direkt diesen Reiter. */
-    fun meeting(id: String, tab: String? = null) =
-        if (tab == null) "meeting/$id" else "meeting/$id?tab=$tab"
+    const val ASK = "ask"
+    const val MEETING = "meeting/{id}?tab={tab}&seg={seg}"
+    /**
+     * [tab]: optional „tasks“, „transcript“ oder „summary“ – öffnet direkt diesen Reiter.
+     * [seg]: optional Index eines Redebeitrags – öffnet das Transkript an dieser Stelle und spielt ab.
+     */
+    fun meeting(id: String, tab: String? = null, seg: Int = -1): String {
+        val params = buildList {
+            if (tab != null) add("tab=$tab")
+            if (seg >= 0) add("seg=$seg")
+        }
+        return if (params.isEmpty()) "meeting/$id" else "meeting/$id?" + params.joinToString("&")
+    }
 }
 
 fun hasPermission(context: Context, permission: String): Boolean =
@@ -108,7 +120,19 @@ fun AppNavigation(
         importing = true
         scope.launch {
             try {
+                val isDoc = runCatching { ProtocolImporter.isDocument(context, uri) }.getOrDefault(false)
+                val defaultTemplate = AppSettings.state.value.defaultTemplate
+                if (isDoc) {
+                    // Altes Protokoll (PDF/Word/Text): Text übernehmen, KI erstellt Zusammenfassung + Aufgaben
+                    val meeting = ProtocolImporter.import(context, uri, startProcessing = false)
+                    runCatching { applyTemplate(context, meeting.id, defaultTemplate) }
+                    if (ModelManager.state.value.installed) ProcessingService.regenerate(context, meeting.id)
+                    nav.navigate(Routes.meeting(meeting.id)) { launchSingleTop = true }
+                    return@launch
+                }
                 val meeting = withContext(Dispatchers.Default) { importAudio(context, uri) }
+                // Standardvorlage auch für importierte Dateien
+                runCatching { applyTemplate(context, meeting.id, defaultTemplate) }
                 if (AppSettings.state.value.autoProcess && ModelManager.state.value.installed) {
                     ProcessingService.process(context, meeting.id)
                 }
@@ -154,6 +178,16 @@ fun AppNavigation(
                 onStartRecording = { nav.navigate(Routes.RECORDING) { launchSingleTop = true } },
                 onOpenSettings = { nav.navigate(Routes.SETTINGS) { launchSingleTop = true } },
                 onImport = importFile,
+                onOpenAsk = { nav.navigate(Routes.ASK) { launchSingleTop = true } },
+            )
+        }
+        composable(Routes.ASK) {
+            AskScreen(
+                onBack = { nav.popBackStack() },
+                onOpenHit = { id, seg ->
+                    if (seg >= 0) nav.navigate(Routes.meeting(id, "transcript", seg))
+                    else nav.navigate(Routes.meeting(id, "summary"))
+                },
             )
         }
         composable(Routes.RECORDING) {
@@ -176,13 +210,19 @@ fun AppNavigation(
                     nullable = true
                     defaultValue = null
                 },
+                navArgument("seg") {
+                    type = NavType.IntType
+                    defaultValue = -1
+                },
             ),
         ) { entry ->
             val id = entry.arguments?.getString("id").orEmpty()
             val tab = entry.arguments?.getString("tab")
+            val seg = entry.arguments?.getInt("seg", -1) ?: -1
             MeetingScreen(
                 meetingId = id,
                 initialTab = tab,
+                initialSegment = seg,
                 onBack = { nav.popBackStack() },
                 // Sprung zu einer anderen (früheren) Besprechung: Zurück führt hierher zurück
                 onOpenMeeting = { other -> if (other != id) nav.navigate(Routes.meeting(other, "tasks")) },
@@ -219,7 +259,7 @@ fun AppNavigation(
                     CircularProgressIndicator(modifier = Modifier.size(40.dp))
                     Text("Datei wird importiert …", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Die Audiospur wird für die Offline-Verarbeitung vorbereitet.",
+                        "Die Datei wird für die Offline-Verarbeitung vorbereitet.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,

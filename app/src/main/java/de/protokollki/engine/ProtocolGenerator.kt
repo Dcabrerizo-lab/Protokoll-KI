@@ -1,5 +1,6 @@
 package de.protokollki.engine
 
+import de.protokollki.data.ProtocolTemplate
 import de.protokollki.data.Segment
 import de.protokollki.data.Speaker
 import de.protokollki.data.Summary
@@ -57,6 +58,8 @@ class ProtocolGenerator(private val model: TextModel) {
         wantSummary: Boolean,
         agenda: List<String> = emptyList(),
         openTasks: List<OpenTask> = emptyList(),
+        template: ProtocolTemplate = ProtocolTemplate.ALLGEMEIN,
+        vocabulary: List<String> = emptyList(),
         progress: Progress,
     ): Result {
         val names = speakers.associate { it.id to it.name }
@@ -66,6 +69,11 @@ class ProtocolGenerator(private val model: TextModel) {
         val date = SimpleDateFormat("EEEE, dd.MM.yyyy", Locale.GERMAN).format(Date(dateMillis))
         val header = buildString {
             append("Besprechung: $title\nDatum: $date\nTeilnehmende: ${participants.joinToString(", ")}")
+            if (template != ProtocolTemplate.ALLGEMEIN) append("\nArt: ${template.label}")
+            if (vocabulary.isNotEmpty()) {
+                append("\nRichtige Schreibweise von Namen und Fachbegriffen: ")
+                append(vocabulary.take(60).joinToString(", "))
+            }
             if (agenda.isNotEmpty()) {
                 append("\nTagesordnung:\n")
                 agenda.forEachIndexed { i, t -> append("TOP ${i + 1}: $t\n") }
@@ -87,7 +95,7 @@ class ProtocolGenerator(private val model: TextModel) {
         fun prog(text: String, inner: Float = 0f): Boolean =
             progress.update(((step + inner) / steps).coerceIn(0f, 1f), text)
 
-        val extras = extraRules(agenda.isNotEmpty(), openTasks.isNotEmpty())
+        val extras = extraRules(agenda.isNotEmpty(), openTasks.isNotEmpty(), template)
         val raws = mutableListOf<String>()
         if (wantSummary) {
             val material = if (chunks.size == 1) "Transkript:\n" + chunks[0] else {
@@ -114,6 +122,17 @@ class ProtocolGenerator(private val model: TextModel) {
                 raws += model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c),
                     1400, 0.0f, TASKS_GRAMMAR, llmProgress { prog(label, it) })
                 step++
+            }
+        }
+
+        // Kleine Modelle lassen im kombinierten Durchgang manchmal die Aufgaben weg:
+        // dann gezielt nachfassen (nur Aufgaben, je Abschnitt).
+        if (wantSummary && raws.none { parseTasks(it, segments.size).isNotEmpty() }) {
+            for (c in chunks) {
+                val label = "Prüfe Aufgaben …"
+                if (!progress.update(0.97f, label)) throw LlmException("Abgebrochen")
+                raws += model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c),
+                    1400, 0.0f, TASKS_GRAMMAR, null)
             }
         }
 
@@ -192,8 +211,18 @@ Regeln für "sensible_daten": Namen von Klienten, Patienten, Bewohnern oder ande
 
         private const val FOLLOWUP_RULE = """Regeln für "erledigte_aufgaben": Kennungen (z. B. "A2 [14]") der offenen Aufgaben aus früheren Besprechungen, von denen im Gespräch gesagt wird, dass sie erledigt sind, jeweils mit der belegenden Zeilennummer. Nur bei klarer Aussage. Leere Liste, wenn keine."""
 
-        internal fun extraRules(hasAgenda: Boolean, hasOpenTasks: Boolean): String = buildString {
+        internal fun templateRule(t: ProtocolTemplate): String? = when (t) {
+            ProtocolTemplate.ALLGEMEIN -> null
+            ProtocolTemplate.DIENSTBESPRECHUNG -> """Vorlage Dienstbesprechung: Gliedere "themen" nach Bereichen wie "Informationen", "Organisation und Dienstplan", "Termine", "Sonstiges" (nur Bereiche, die vorkamen; passende eigene Titel erlaubt). Termine immer mit Datum bzw. Zeitangabe nennen."""
+            ProtocolTemplate.FALLBESPRECHUNG -> """Vorlage Fallbesprechung: Je besprochenem Fall (Klient, Patient, Bewohner) ein Thema mit dem Titel "Fall: <Name oder Kürzel wie im Gespräch>". Punkte, soweit besprochen, in dieser Reihenfolge und mit diesen Anfängen: "Ausgangslage: …", "Einschätzung: …", "Vereinbarte Maßnahmen: …", "Nächste Überprüfung: …". Fachlich und wertschätzend formulieren, keine Vermutungen."""
+            ProtocolTemplate.UEBERGABE -> """Vorlage Übergabe: Je Person (Klient, Patient, Bewohner) ein Thema mit dem Namen als Titel. Punkte, soweit genannt: "Befinden: …", "Besonderheiten: …", "Pflege/Medikation: …", "Für den nächsten Dienst: …". Allgemeine Informationen unter dem Titel "Allgemein". Kurz und eindeutig."""
+            ProtocolTemplate.VEREINSSITZUNG -> """Vorlage Vereinssitzung: Formales Sitzungsprotokoll. Erstes Thema "Eröffnung und Formalien" (Begrüßung, Beschlussfähigkeit, Genehmigung der Tagesordnung und des letzten Protokolls), soweit erwähnt. Jede Abstimmung gehört in "beschluesse" im Format "<Beschlusstext> – Abstimmung: X Ja, Y Nein, Z Enthaltungen, angenommen." bzw. "… einstimmig angenommen." oder "… abgelehnt.". Zahlen nur, wenn sie genannt wurden."""
+        }
+
+        internal fun extraRules(hasAgenda: Boolean, hasOpenTasks: Boolean,
+                                template: ProtocolTemplate = ProtocolTemplate.ALLGEMEIN): String = buildString {
             append(TASK_RULES)
+            templateRule(template)?.let { append("\n").append(it) }
             if (hasAgenda) append("\n").append(AGENDA_RULE)
             append("\n").append(if (hasOpenTasks) FOLLOWUP_RULE else "\"erledigte_aufgaben\": immer leere Liste.")
             append("\n").append(CITE_RULE)

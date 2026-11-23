@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -76,6 +77,11 @@ import de.protokollki.audio.Recorder
 import de.protokollki.data.AppSettings
 import de.protokollki.data.MeetingRepository
 import de.protokollki.data.MeetingStatus
+import de.protokollki.data.ProtocolTemplate
+import de.protokollki.export.isFormal
+import de.protokollki.ui.components.TemplateSheet
+import de.protokollki.ui.components.applyTemplate
+import de.protokollki.ui.components.templateIcon
 import de.protokollki.ui.components.formatClock
 import de.protokollki.ui.hasPermission
 import de.protokollki.ui.openAppSettings
@@ -110,13 +116,18 @@ fun RecordingScreen(
     var leaving by remember { mutableStateOf(false) }
     var sawActive by remember { mutableStateOf(false) }
     var showAgenda by remember { mutableStateOf(false) }
+    var showTemplates by remember { mutableStateOf(false) }
     val meetings by MeetingRepository.meetings.collectAsStateWithLifecycle()
-    val agenda = meetings.firstOrNull { it.id == (rec.meetingId ?: meetingId) }?.agenda.orEmpty()
+    val current = meetings.firstOrNull { it.id == (rec.meetingId ?: meetingId) }
+    val agenda = current?.agenda.orEmpty()
+    val template = current?.template ?: AppSettings.state.value.defaultTemplate
 
     fun startRecording() {
         try {
             val id = Recorder.start(context)
             meetingId = id
+            // Neue Besprechung: Standardvorlage übernehmen (pro Aufnahme über „Vorlage“ änderbar)
+            runCatching { applyTemplate(context, id, AppSettings.state.value.defaultTemplate) }
             permissionDenied = false
             startError = if (Recorder.state.value.active) null
             else MeetingRepository.get(id)?.error ?: "Die Aufnahme konnte nicht gestartet werden."
@@ -276,9 +287,16 @@ fun RecordingScreen(
                             .height(150.dp)
                             .padding(horizontal = 24.dp),
                     )
-                    Spacer(Modifier.height(28.dp))
+                    Spacer(Modifier.height(24.dp))
+                    TemplatePill(
+                        template = template,
+                        enabled = (rec.meetingId ?: meetingId) != null,
+                        onClick = { showTemplates = true },
+                    )
+                    Spacer(Modifier.height(10.dp))
                     AgendaPill(
                         agenda = agenda,
+                        formal = template.isFormal,
                         enabled = (rec.meetingId ?: meetingId) != null,
                         onClick = { showAgenda = true },
                     )
@@ -323,6 +341,16 @@ fun RecordingScreen(
     val agendaMeetingId = rec.meetingId ?: meetingId
     if (showAgenda && agendaMeetingId != null) {
         AgendaSheet(meetingId = agendaMeetingId, onDismiss = { showAgenda = false })
+    }
+    if (showTemplates && agendaMeetingId != null) {
+        TemplateSheet(
+            selected = template,
+            onSelect = { t ->
+                showTemplates = false
+                applyTemplate(context, agendaMeetingId, t)
+            },
+            onDismiss = { showTemplates = false },
+        )
     }
 
     if (confirmDiscard) {
@@ -513,9 +541,34 @@ private fun PermissionOrErrorView(
     }
 }
 
+/** Vorlage der laufenden Aufnahme: „Vorlage: Allgemein ▾“, antippen öffnet die Auswahl. */
+@Composable
+private fun TemplatePill(template: ProtocolTemplate, enabled: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(Color.White.copy(alpha = 0.10f))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(start = 16.dp, end = 10.dp, top = 9.dp, bottom = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(templateIcon(template), contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "Vorlage: ${template.label}",
+            style = MaterialTheme.typography.labelLarge,
+            color = Color.White,
+        )
+        Icon(
+            Icons.Filled.ArrowDropDown, contentDescription = "Vorlage ändern",
+            tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
 /** Tagesordnung während der Aufnahme: Knopf + kompakte Liste der TOPs. */
 @Composable
-private fun AgendaPill(agenda: List<String>, enabled: Boolean, onClick: () -> Unit) {
+private fun AgendaPill(agenda: List<String>, formal: Boolean, enabled: Boolean, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
             modifier = Modifier
@@ -534,7 +587,7 @@ private fun AgendaPill(agenda: List<String>, enabled: Boolean, onClick: () -> Un
             Spacer(Modifier.width(8.dp))
             Text(
                 when (agenda.size) {
-                    0 -> "Tagesordnung hinzufügen"
+                    0 -> if (formal) "Sitzungsdaten & Tagesordnung" else "Tagesordnung hinzufügen"
                     1 -> "Tagesordnung · 1 TOP"
                     else -> "Tagesordnung · ${agenda.size} TOPs"
                 },

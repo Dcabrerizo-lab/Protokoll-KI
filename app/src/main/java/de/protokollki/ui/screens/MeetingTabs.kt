@@ -321,6 +321,7 @@ fun LazyListScope.transcriptItems(
         }
         return
     }
+    val imported = m.importedFrom != null
     item(key = "trHint") {
         Row(
             modifier = ItemPadding.padding(bottom = 4.dp),
@@ -333,7 +334,8 @@ fun LazyListScope.transcriptItems(
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                (if (verbatim) "Wortprotokoll · " else "") + "${m.segments.size} Redebeiträge · " +
+                if (imported) "Originaltext · ${m.segments.size} Absätze · importiert aus ${m.importedFrom}"
+                else (if (verbatim) "Wortprotokoll · " else "") + "${m.segments.size} Redebeiträge · " +
                     "Tippen zum Abspielen, lange drücken zum Ändern des Sprechers",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -343,16 +345,40 @@ fun LazyListScope.transcriptItems(
     itemsIndexed(m.segments, key = { i, _ -> "seg_$i" }) { i, seg ->
         val prev = m.segments.getOrNull(i - 1)
         val newSpeaker = prev == null || prev.speakerId != seg.speakerId
-        SegmentRow(
-            segment = seg,
-            name = m.speakerName(seg.speakerId),
-            showHeader = newSpeaker,
-            active = i == activeIndex,
-            verbatim = verbatim,
-            onClick = { onSeek(seg) },
-            onLongClick = { onLongPress(i) },
-        )
+        if (imported) {
+            PlainParagraphRow(text = seg.text, active = i == activeIndex)
+        } else {
+            SegmentRow(
+                segment = seg,
+                name = m.speakerName(seg.speakerId),
+                showHeader = newSpeaker,
+                active = i == activeIndex,
+                verbatim = verbatim,
+                onClick = { onSeek(seg) },
+                onLongClick = { onLongPress(i) },
+            )
+        }
     }
+}
+
+/** Absatz eines importierten Protokolls: ohne Sprecher, Avatar und Zeitstempel. */
+@Composable
+private fun PlainParagraphRow(text: String, active: Boolean) {
+    val cs = MaterialTheme.colorScheme
+    val bg by animateColorAsState(
+        if (active) cs.primary.copy(alpha = 0.10f) else Color.Transparent, label = "paraBg"
+    )
+    Text(
+        text.trim(),
+        style = MaterialTheme.typography.bodyLarge,
+        color = cs.onSurface,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(bg)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)

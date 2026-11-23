@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -25,6 +24,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -43,6 +45,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +57,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,6 +67,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.protokollki.data.AppSettings
 import de.protokollki.data.Meeting
 import de.protokollki.data.MeetingRepository
+import de.protokollki.data.ProtocolTemplate
+import de.protokollki.export.MINUTE_TAKER_ROLE
+import de.protokollki.export.chairRole
+import de.protokollki.export.isFormal
+import de.protokollki.ui.components.UiPrefs
+import de.protokollki.ui.components.hasMinuteTaker
 import de.protokollki.privacy.Redactor
 import de.protokollki.ui.components.speakersOf
 import kotlinx.coroutines.Dispatchers
@@ -143,15 +154,29 @@ fun TermChipsEditor(
 // ================================================================ Tagesordnung
 
 /**
- * Tagesordnung bearbeiten. Jede Änderung wird sofort gespeichert.
+ * Sitzungsdaten (bei formalen Vorlagen: Ort, Leitung, Protokollführung) und Tagesordnung –
+ * alles an einem Ort. TOPs werden sofort gespeichert, Sitzungsdaten beim Schließen.
  * [onDismiss] meldet, ob sich die Tagesordnung geändert hat.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AgendaSheet(meetingId: String, onDismiss: (changed: Boolean) -> Unit) {
-    val initial = remember { MeetingRepository.get(meetingId)?.agenda.orEmpty() }
+    val context = LocalContext.current
+    val meeting = remember { MeetingRepository.get(meetingId) }
+    val initial = remember { meeting?.agenda.orEmpty() }
+    val template = remember { meeting?.template ?: ProtocolTemplate.ALLGEMEIN }
+    val formal = template.isFormal
     var items by remember { mutableStateOf(initial) }
     var input by remember { mutableStateOf("") }
+    var location by remember { mutableStateOf(meeting?.location.orEmpty()) }
+    var chair by remember { mutableStateOf(meeting?.chair.orEmpty()) }
+    var minuteTaker by remember {
+        mutableStateOf(
+            meeting?.minuteTaker.orEmpty().ifBlank {
+                if (template.hasMinuteTaker()) UiPrefs.lastMinuteTaker(context) else ""
+            }
+        )
+    }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val focus = remember { FocusRequester() }
 
@@ -163,14 +188,28 @@ fun AgendaSheet(meetingId: String, onDismiss: (changed: Boolean) -> Unit) {
         val parts = raw.split('\n').map { it.trim().trimStart('-', '•', '*').trim() }.filter { it.isNotEmpty() }
         if (parts.isNotEmpty()) save(items + parts)
     }
+    fun saveDetails() {
+        if (!formal) return
+        val l = location.trim()
+        val c = chair.trim()
+        val t = minuteTaker.trim()
+        val cur = MeetingRepository.get(meetingId) ?: return
+        if (cur.location != l || cur.chair != c || cur.minuteTaker != t) {
+            MeetingRepository.update(meetingId) { it.copy(location = l, chair = c, minuteTaker = t) }
+        }
+        UiPrefs.rememberMinuteTaker(context, t)
+    }
     val finish: () -> Unit = {
         if (input.isNotBlank()) addFrom(input)
         input = ""
+        saveDetails()
         onDismiss(items != initial)
     }
+    // Auch speichern, wenn das Sheet ohne „Fertig“ verschwindet (z. B. Aufnahme beendet)
+    DisposableEffect(Unit) { onDispose { saveDetails() } }
 
     LaunchedEffect(Unit) {
-        if (initial.isEmpty()) {
+        if (initial.isEmpty() && !formal) {
             delay(350)
             runCatching { focus.requestFocus() }
         }
@@ -182,13 +221,33 @@ fun AgendaSheet(meetingId: String, onDismiss: (changed: Boolean) -> Unit) {
                 .fillMaxWidth()
                 .imePadding()
                 .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 16.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.FormatListNumbered, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(10.dp))
-                Text("Tagesordnung", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    if (formal) "Sitzungsdaten & Tagesordnung" else "Tagesordnung",
+                    style = MaterialTheme.typography.titleLarge,
+                )
+            }
+            if (formal) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Erscheinen im Kopf und im Unterschriftsfeld des Protokolls. Alles optional.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                DetailField(location, { location = it }, "Ort", Icons.Filled.Place, KeyboardCapitalization.Sentences)
+                Spacer(Modifier.height(8.dp))
+                DetailField(chair, { chair = it }, chairRole(template), Icons.Filled.Person, KeyboardCapitalization.Words)
+                Spacer(Modifier.height(8.dp))
+                DetailField(minuteTaker, { minuteTaker = it }, MINUTE_TAKER_ROLE, Icons.Filled.EditNote, KeyboardCapitalization.Words)
+                Spacer(Modifier.height(20.dp))
+                Text("Tagesordnung", style = MaterialTheme.typography.titleSmall)
             }
             Spacer(Modifier.height(4.dp))
             Text(
@@ -197,12 +256,7 @@ fun AgendaSheet(meetingId: String, onDismiss: (changed: Boolean) -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
-            Column(
-                modifier = Modifier
-                    .heightIn(max = 320.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items.forEachIndexed { i, top ->
                     Surface(
                         shape = RoundedCornerShape(14.dp),
@@ -271,6 +325,33 @@ fun AgendaSheet(meetingId: String, onDismiss: (changed: Boolean) -> Unit) {
             Button(onClick = finish, modifier = Modifier.fillMaxWidth()) { Text("Fertig") }
         }
     }
+}
+
+@Composable
+private fun DetailField(
+    value: String,
+    onChange: (String) -> Unit,
+    label: String,
+    icon: ImageVector,
+    capitalization: KeyboardCapitalization,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { onChange(it.replace('\n', ' ')) },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        label = { Text(label) },
+        leadingIcon = { Icon(icon, contentDescription = null) },
+        trailingIcon = {
+            if (value.isNotEmpty()) {
+                IconButton(onClick = { onChange("") }) {
+                    Icon(Icons.Filled.Close, contentDescription = "„$label“ leeren")
+                }
+            }
+        },
+        shape = RoundedCornerShape(16.dp),
+        keyboardOptions = KeyboardOptions(capitalization = capitalization, imeAction = ImeAction.Next),
+    )
 }
 
 // ================================================================ Sensible Daten

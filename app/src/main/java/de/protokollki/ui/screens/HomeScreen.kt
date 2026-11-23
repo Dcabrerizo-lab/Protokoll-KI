@@ -35,7 +35,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
@@ -47,7 +47,6 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material.icons.filled.Timer
@@ -76,8 +75,6 @@ import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -108,6 +105,7 @@ import de.protokollki.data.ProtocolMode
 import de.protokollki.data.TaskItem
 import de.protokollki.data.TaskTracker
 import de.protokollki.engine.ModelManager
+import de.protokollki.importdoc.ProtocolImporter
 import de.protokollki.service.ProcessingService
 import de.protokollki.ui.components.EmptyState
 import de.protokollki.ui.components.MetaItem
@@ -135,13 +133,13 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
     onImport: (Uri) -> Unit,
     onOpenTask: (String) -> Unit = onOpenMeeting,
+    onOpenAsk: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val meetings by MeetingRepository.meetings.collectAsStateWithLifecycle()
     val rec by Recorder.state.collectAsStateWithLifecycle()
     val ms by remember { ModelManager.state }.collectAsStateWithLifecycle()
 
-    var query by rememberSaveable { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<Meeting?>(null) }
     var micDenied by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableIntStateOf(0) }   // 0 = Besprechungen, 1 = Aufgaben
@@ -194,18 +192,11 @@ fun HomeScreen(
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri -> if (uri != null) onImport(uri) }
-    val startImport: () -> Unit = { importLauncher.launch(arrayOf("audio/*", "video/*")) }
-
-    val filtered = remember(meetings, query) {
-        val q = query.trim().lowercase()
-        if (q.isEmpty()) meetings else meetings.filter { m ->
-            m.title.lowercase().contains(q) ||
-                m.summary.overview.lowercase().contains(q) ||
-                m.speakers.any { it.name.lowercase().contains(q) } ||
-                m.segments.any { it.text.lowercase().contains(q) }
-        }
+    val startImport: () -> Unit = {
+        importLauncher.launch(arrayOf("audio/*", "video/*") + ProtocolImporter.MIME_TYPES)
     }
-    val groups = remember(filtered) { filtered.groupBy { dayKey(it.createdAt) } }
+
+    val groups = remember(meetings) { meetings.groupBy { dayKey(it.createdAt) } }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -244,7 +235,7 @@ fun HomeScreen(
         ) {
             if (meetings.isNotEmpty() && tab == 0) {
                 item(key = "search") {
-                    SearchField(query = query, onChange = { query = it })
+                    AskEntry(onClick = onOpenAsk)
                 }
             }
             if (rec.active) {
@@ -282,25 +273,24 @@ fun HomeScreen(
                         icon = Icons.Filled.Mic,
                         title = "Noch keine Besprechungen",
                         message = "Tippen Sie unten auf den Aufnahme-Knopf, um Ihre erste Besprechung " +
-                            "aufzuzeichnen – oder importieren Sie eine vorhandene Audiodatei.",
+                            "aufzuzeichnen – oder importieren Sie eine Aufnahme oder alte Protokolle, " +
+                            "damit sie durchsuchbar werden.",
                         modifier = Modifier.padding(top = 48.dp),
                         action = {
-                            FilledTonalButton(onClick = startImport) {
-                                Icon(Icons.Filled.UploadFile, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Datei importieren")
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                FilledTonalButton(onClick = startImport) {
+                                    Icon(Icons.Filled.UploadFile, contentDescription = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Datei importieren")
+                                }
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    "Audio, Video oder altes Protokoll (PDF, Word, Text)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                         },
-                    )
-                }
-            } else if (filtered.isEmpty()) {
-                item(key = "noResults") {
-                    EmptyState(
-                        icon = Icons.Filled.SearchOff,
-                        title = "Keine Treffer",
-                        message = "Für „${query.trim()}“ wurde nichts gefunden. Durchsucht werden Titel, " +
-                            "Zusammenfassungen, Teilnehmende und Transkripte.",
-                        modifier = Modifier.padding(top = 24.dp),
                     )
                 }
             } else {
@@ -456,31 +446,47 @@ private fun HomeTopBar(
   }
 }
 
+/**
+ * Einstieg in „Fragen an alle Besprechungen“: sieht aus wie ein Suchfeld, öffnet beim Antippen
+ * den eigenen Bildschirm mit Suche und KI-Antwort.
+ */
 @Composable
-private fun SearchField(query: String, onChange: (String) -> Unit) {
-    TextField(
-        value = query,
-        onValueChange = onChange,
-        modifier = Modifier.fillMaxWidth(),
-        placeholder = { Text("Besprechungen durchsuchen") },
-        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-        trailingIcon = {
-            if (query.isNotEmpty()) {
-                IconButton(onClick = { onChange("") }) {
-                    Icon(Icons.Filled.Close, contentDescription = "Suche löschen")
-                }
-            }
-        },
-        singleLine = true,
+private fun AskEntry(onClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Surface(
+        onClick = onClick,
         shape = RoundedCornerShape(28.dp),
-        colors = TextFieldDefaults.colors(
-            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            focusedIndicatorColor = Color.Transparent,
-            unfocusedIndicatorColor = Color.Transparent,
-            disabledIndicatorColor = Color.Transparent,
-        ),
-    )
+        color = cs.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.Search, contentDescription = null, tint = cs.onSurfaceVariant)
+            Spacer(Modifier.width(12.dp))
+            Text(
+                "Besprechungen durchsuchen oder fragen …",
+                style = MaterialTheme.typography.bodyLarge,
+                color = cs.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(cs.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.AutoAwesome, contentDescription = "KI fragen",
+                    tint = cs.onPrimaryContainer, modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------- Banner
@@ -659,7 +665,9 @@ private fun MeetingCard(meeting: Meeting, onClick: () -> Unit, onLongClick: () -
                     Spacer(Modifier.height(4.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         MetaItem(Icons.Filled.Schedule, formatTime(meeting.createdAt))
-                        if (meeting.durationSec > 0f) {
+                        if (meeting.importedFrom != null) {
+                            MetaItem(Icons.Filled.UploadFile, "Importiert")
+                        } else if (meeting.durationSec > 0f) {
                             MetaItem(Icons.Filled.Timer, formatDurationWords(meeting.durationSec))
                         }
                     }
@@ -721,7 +729,7 @@ private fun MeetingCard(meeting: Meeting, onClick: () -> Unit, onLongClick: () -
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                SpeakerAvatarStack(speakers = speakers, size = 24.dp)
+                if (meeting.importedFrom == null) SpeakerAvatarStack(speakers = speakers, size = 24.dp)
             }
         }
     }

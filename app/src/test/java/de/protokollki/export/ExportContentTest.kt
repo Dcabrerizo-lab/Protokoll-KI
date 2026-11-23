@@ -3,6 +3,7 @@ package de.protokollki.export
 import de.protokollki.data.FollowUp
 import de.protokollki.data.Meeting
 import de.protokollki.data.ProtocolMode
+import de.protokollki.data.ProtocolTemplate
 import de.protokollki.data.Segment
 import de.protokollki.data.Speaker
 import de.protokollki.data.Summary
@@ -158,5 +159,112 @@ class ExportContentTest {
         val txt = renderPlainText(buildBlocks(meeting(ProtocolMode.ERGEBNIS), utc))
         assertFalse(txt.contains("TAGESORDNUNG"))
         assertFalse(txt.contains(FOLLOWUP_HEADING.uppercase()))
+    }
+
+    // ------------------------------------------------------------------ Vorlagen
+
+    private fun formal(template: ProtocolTemplate = ProtocolTemplate.VEREINSSITZUNG) =
+        meeting(ProtocolMode.ERGEBNIS).copy(
+            template = template,
+            location = "Vereinsheim",
+            chair = "Clara Vogt",
+            minuteTaker = "",
+        )
+
+    @Test
+    fun generalTemplateKeepsClassicHeader() {
+        val m = meeting(ProtocolMode.ERGEBNIS).copy(location = "Raum 1", chair = "X", minuteTaker = "Y")
+        val blocks = buildBlocks(m, utc, organization = "Verein e. V.")
+        assertEquals(Block.Title("Ergebnisprotokoll", "Team <Jour> & Fixe"), blocks.first())
+        val meta = blocks.filterIsInstance<Block.Meta>().map { it.label }
+        assertEquals(listOf("Datum", "Dauer", "Teilnehmende"), meta)
+        assertTrue(blocks.none { it is Block.Signatures })
+        assertFalse(renderPlainText(blocks).contains(SIGNATURE_LINE))
+    }
+
+    @Test
+    fun formalHeaderListsOnlyFilledFields() {
+        val blocks = buildBlocks(formal(), utc, organization = "Sportverein Musterstadt e. V.")
+        assertEquals(Block.Title("Sitzungsprotokoll", "Team <Jour> & Fixe"), blocks.first())
+        val meta = blocks.filterIsInstance<Block.Meta>().map { it.label to it.value }
+        assertEquals(
+            listOf(
+                "Einrichtung" to "Sportverein Musterstadt e. V.",
+                "Datum" to "01.01.1970",
+                "Uhrzeit" to "00:00 – 01:02 Uhr",
+                "Ort" to "Vereinsheim",
+                "Sitzungsleitung" to "Clara Vogt",
+                "Teilnehmende" to "Ben, Anna",
+            ),
+            meta,
+        )
+        // ohne Einrichtung entfällt die Zeile
+        val noOrg = buildBlocks(formal(), utc).filterIsInstance<Block.Meta>().map { it.label }
+        assertFalse(noOrg.contains("Einrichtung"))
+        assertEquals("Leitung", chairRole(ProtocolTemplate.DIENSTBESPRECHUNG))
+        assertEquals("Sitzungsleitung", chairRole(ProtocolTemplate.VEREINSSITZUNG))
+    }
+
+    @Test
+    fun signatureBlockAtTheEnd() {
+        val blocks = buildBlocks(formal().copy(minuteTaker = "Dana Roth"), utc)
+        // Unterschriften direkt vor dem Hinweis am Ende
+        assertEquals(Block.Note(FOOTER_NOTE), blocks.last())
+        val sig = blocks[blocks.size - 2] as Block.Signatures
+        assertEquals(
+            listOf(SignatureLine("Sitzungsleitung", "Clara Vogt"), SignatureLine("Protokollführung", "Dana Roth")),
+            sig.lines,
+        )
+
+        val txt = renderPlainText(blocks)
+        assertTrue(txt.startsWith("SITZUNGSPROTOKOLL"))
+        assertTrue(txt.contains("Ort: Vereinsheim\nSitzungsleitung: Clara Vogt\nProtokollführung: Dana Roth"))
+        assertTrue(txt.contains("$SIGNATURE_LINE\nOrt, Datum\nSitzungsleitung (Clara Vogt)\n"))
+        assertTrue(txt.contains("$SIGNATURE_LINE\nOrt, Datum\nProtokollführung (Dana Roth)\n"))
+        assertTrue(txt.indexOf(SIGNATURE_LINE) < txt.indexOf(FOOTER_NOTE))
+
+        val md = renderMarkdown(blocks)
+        assertTrue(md.startsWith("# Sitzungsprotokoll: "))
+        assertTrue(md.contains("**Ort:** Vereinsheim  \n"))
+        // Unterstriche maskiert, damit keine Trennlinie entsteht
+        assertTrue(md.contains("\\_".repeat(SIGNATURE_LINE.length) + "  \nOrt, Datum  \n**Sitzungsleitung** (Clara Vogt)"))
+        assertTrue(md.contains("**Protokollführung** (Dana Roth)"))
+    }
+
+    @Test
+    fun signatureNamesOnlyWhereKnown() {
+        val lines = signatureLines(formal(ProtocolTemplate.UEBERGABE).copy(chair = "", minuteTaker = "Max"))
+        assertEquals(listOf("Übergebende Fachkraft", "Übernehmende Fachkraft"), lines.map { it.role })
+        assertTrue(lines.all { it.name.isEmpty() })
+        assertEquals("Übergebende Fachkraft", lines.first().label)
+    }
+
+    @Test
+    fun formalDocxHasBorderlessSignatureTable() {
+        val blocks = buildBlocks(formal(ProtocolTemplate.DIENSTBESPRECHUNG), utc, organization = "Jugendhilfe & Co")
+        val out = ByteArrayOutputStream()
+        DocxWriter.write(blocks, out)
+        val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+        ZipInputStream(ByteArrayInputStream(out.toByteArray())).use { zip ->
+            while (true) {
+                zip.nextEntry ?: break
+                factory.newDocumentBuilder().parse(ByteArrayInputStream(zip.readBytes()))
+            }
+        }
+        val doc = DocxWriter.document(blocks)
+        assertTrue(doc.contains("Protokoll der Dienstbesprechung"))
+        assertTrue(doc.contains("Jugendhilfe &amp; Co"))
+        assertTrue(doc.contains("w:val=\"nil\""))
+        assertTrue(doc.contains("Ort, Datum"))
+        assertTrue(doc.contains("Leitung (Clara Vogt)"))
+        assertTrue(doc.contains(">Protokollführung<"))
+        // Aufgaben-Tabelle + Unterschriften-Tabelle
+        assertEquals(2, Regex("<w:tbl>").findAll(doc).count())
+    }
+
+    @Test
+    fun timeRangeWithoutDuration() {
+        assertEquals("00:00 Uhr", formatTimeRange(0L, 0f, utc))
+        assertEquals("00:00 – 00:45 Uhr", formatTimeRange(0L, 2700f, utc))
     }
 }

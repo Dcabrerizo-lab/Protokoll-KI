@@ -22,9 +22,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Business
+import androidx.compose.material.icons.filled.Spellcheck
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.RecordVoiceOver
@@ -42,6 +45,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -63,6 +67,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.protokollki.data.AppSettings
@@ -73,6 +79,8 @@ import de.protokollki.engine.VoiceProfiles
 import de.protokollki.service.DownloadService
 import de.protokollki.ui.components.ModelDownloadPanel
 import de.protokollki.ui.components.ModelSetCard
+import de.protokollki.ui.components.TemplateChip
+import de.protokollki.ui.components.TemplateSheet
 import de.protokollki.ui.components.OfflineBadge
 import de.protokollki.ui.components.formatGb
 import de.protokollki.ui.components.formatRam
@@ -89,6 +97,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenVoices: () -> Unit = {}) {
 
     var refresh by remember { mutableIntStateOf(0) }
     var confirmCleanup by remember { mutableStateOf(false) }
+    var showTemplates by remember { mutableStateOf(false) }
 
     val freeBytes = remember(ms.downloading, ms.installed, ms.set.id, refresh) {
         runCatching { ModelManager.freeBytes() }.getOrDefault(0L)
@@ -171,6 +180,36 @@ fun SettingsScreen(onBack: () -> Unit, onOpenVoices: () -> Unit = {}) {
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showTemplates = true }
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Standardvorlage", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "Gilt für neue Aufnahmen und Importe. Pro Besprechung änderbar.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        TemplateChip(template = settings.defaultTemplate, onClick = { showTemplates = true })
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Column(Modifier.padding(16.dp)) {
+                        Text("Einrichtung", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "Erscheint im Kopf formaler Protokolle (Dienst-, Fallbesprechung, Übergabe, Vereinssitzung).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        OrganizationField(settings.organization)
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Row(
                         modifier = Modifier.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -205,6 +244,36 @@ fun SettingsScreen(onBack: () -> Unit, onOpenVoices: () -> Unit = {}) {
                         Switch(
                             checked = settings.trackTasks,
                             onCheckedChange = { v -> AppSettings.update { it.copy(trackTasks = v) } },
+                        )
+                    }
+                }
+            }
+
+            // ------------------------------------------------ Wörterbuch
+            item(key = "vocabulary") {
+                SettingsGroup("Eigene Begriffe") {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.Spellcheck, contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Wörterbuch", style = MaterialTheme.typography.titleSmall)
+                        }
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "Namen und Fachbegriffe, die richtig geschrieben werden sollen – z. B. Kolleginnen, " +
+                                "Einrichtungen oder Abkürzungen. Namen aus den Stimmprofilen gelten automatisch.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        TermChipsEditor(
+                            terms = settings.vocabulary,
+                            onChange = { list -> AppSettings.update { it.copy(vocabulary = list) } },
+                            placeholder = "Begriff hinzufügen (mehrere mit Komma)",
                         )
                     }
                 }
@@ -361,6 +430,19 @@ fun SettingsScreen(onBack: () -> Unit, onOpenVoices: () -> Unit = {}) {
         }
     }
 
+    if (showTemplates) {
+        TemplateSheet(
+            selected = settings.defaultTemplate,
+            onSelect = { t ->
+                showTemplates = false
+                AppSettings.update { it.copy(defaultTemplate = t) }
+            },
+            onDismiss = { showTemplates = false },
+            title = "Standardvorlage",
+            subtitle = "Wird für neue Aufnahmen und importierte Dateien verwendet.",
+        )
+    }
+
     if (confirmCleanup) {
         AlertDialog(
             onDismissRequest = { confirmCleanup = false },
@@ -415,6 +497,28 @@ internal fun SettingsGroup(
             }
         }
     }
+}
+
+/** Name der Einrichtung; wird beim Tippen gespeichert. */
+@Composable
+private fun OrganizationField(value: String) {
+    var text by remember { mutableStateOf(value) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { v ->
+            text = v.replace('\n', ' ')
+            AppSettings.update { it.copy(organization = text.trim()) }
+        },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        placeholder = { Text("z. B. Jugendhilfe Musterstadt e. V.") },
+        leadingIcon = { Icon(Icons.Filled.Business, contentDescription = null) },
+        shape = RoundedCornerShape(16.dp),
+        keyboardOptions = KeyboardOptions(
+            capitalization = KeyboardCapitalization.Words,
+            imeAction = ImeAction.Done,
+        ),
+    )
 }
 
 @Composable

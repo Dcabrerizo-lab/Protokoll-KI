@@ -39,12 +39,13 @@ fun SourceChip(m: Meeting, ref: Int, onCite: (Int) -> Unit, modifier: Modifier =
     if (seg == null) return
     val cs = MaterialTheme.colorScheme
     val audio = !m.audioDeleted
+    val imported = m.importedFrom != null
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(50))
             .background(cs.primary.copy(alpha = 0.08f))
             .clickable { onCite(ref) }
-            .padding(start = 5.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
+            .padding(start = 5.dp, end = if (imported) 5.dp else 8.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
@@ -53,13 +54,16 @@ fun SourceChip(m: Meeting, ref: Int, onCite: (Int) -> Unit, modifier: Modifier =
             tint = cs.primary,
             modifier = Modifier.size(13.dp),
         )
-        Spacer(Modifier.width(2.dp))
-        Text(
-            formatDuration(seg.start),
-            style = MaterialTheme.typography.labelSmall,
-            color = cs.primary,
-            maxLines = 1,
-        )
+        // Importierte Protokolle haben keine Zeitstempel: nur das Zitat-Symbol
+        if (!imported) {
+            Spacer(Modifier.width(2.dp))
+            Text(
+                formatDuration(seg.start),
+                style = MaterialTheme.typography.labelSmall,
+                color = cs.primary,
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -75,6 +79,7 @@ fun QuoteCard(
     val seg = m.segments.getOrNull(ref) ?: return
     val cs = MaterialTheme.colorScheme
     val name = m.speakerName(seg.speakerId)
+    val imported = m.importedFrom != null
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -91,26 +96,28 @@ fun QuoteCard(
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    "Zitat · ",
+                    if (imported) "Zitat aus dem Originaltext" else "Zitat · ",
                     style = MaterialTheme.typography.labelMedium,
                     color = cs.inverseOnSurface.copy(alpha = 0.7f),
                 )
-                SpeakerAvatar(name = name, id = seg.speakerId, size = 18.dp)
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    name,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = cs.inverseOnSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    formatDuration(seg.start),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = cs.inverseOnSurface.copy(alpha = 0.7f),
-                )
+                if (!imported) {
+                    SpeakerAvatar(name = name, id = seg.speakerId, size = 18.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        name,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = cs.inverseOnSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        formatDuration(seg.start),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = cs.inverseOnSurface.copy(alpha = 0.7f),
+                    )
+                }
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = onClose) {
                     Icon(Icons.Filled.Close, contentDescription = "Schließen", modifier = Modifier.size(18.dp))
@@ -127,7 +134,7 @@ fun QuoteCard(
             Row(Modifier.fillMaxWidth()) {
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onShowInTranscript) {
-                    Text("Im Transkript zeigen", color = cs.inversePrimary)
+                    Text(if (imported) "Im Originaltext zeigen" else "Im Transkript zeigen", color = cs.inversePrimary)
                 }
             }
         }

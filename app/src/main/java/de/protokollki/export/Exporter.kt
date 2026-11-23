@@ -43,7 +43,7 @@ object Exporter {
         cleanup(dir)
         val baseName = sanitizeFileName(src.title) + if (anonymized) ANONYMIZED_SUFFIX else ""
         val file = File(dir, baseName + "." + f.ext)
-        val blocks = buildBlocks(src)
+        val blocks = buildBlocks(src, organization = AppSettings.state.value.organization)
         val tmp = File(dir, file.name + ".tmp")
         try {
             when (f) {
@@ -69,7 +69,7 @@ object Exporter {
 
     /** Protokoll als Klartext (z. B. für die Zwischenablage), optional anonymisiert. */
     fun plainText(m: Meeting, anonymized: Boolean = false): String =
-        renderPlainText(buildBlocks(prepare(m, anonymized)))
+        renderPlainText(buildBlocks(prepare(m, anonymized), organization = AppSettings.state.value.organization))
 
     /**
      * Teilt eine Datei aus cacheDir/exports/ über den FileProvider (z. B. den Datenschutz-Nachweis).
@@ -107,8 +107,16 @@ object Exporter {
         }
     }
 
-    private fun prepare(m: Meeting, anonymized: Boolean): Meeting =
-        if (anonymized) Redactor.redact(m, AppSettings.state.value.customTerms) else m
+    private fun prepare(m: Meeting, anonymized: Boolean): Meeting {
+        if (!anonymized) return m
+        val custom = AppSettings.state.value.customTerms
+        val redacted = Redactor.redact(m, custom)
+        // Kopfangaben formaler Protokolle (Ort, Leitung, Protokollführung) ebenfalls schwärzen
+        val terms = m.sensitiveTerms + custom
+        val names = m.speakers.map { it.name }
+        fun r(s: String) = if (s.isBlank()) s else Redactor.redactText(s, terms, names)
+        return redacted.copy(location = r(m.location), chair = r(m.chair), minuteTaker = r(m.minuteTaker))
+    }
 
     private fun findActivity(context: Context): Activity? {
         var c: Context? = context

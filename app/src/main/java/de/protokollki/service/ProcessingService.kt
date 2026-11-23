@@ -150,7 +150,8 @@ class ProcessingService : LifecycleService() {
         }
         MeetingRepository.update(id) { it.copy(speakers = speakers, segments = emptyList()) }
 
-        val segments = transcriber.transcribe(samples, chunks) { done, total, partial ->
+        val vocab = de.protokollki.engine.Vocabulary.terms()
+        val raw = transcriber.transcribe(samples, chunks) { done, total, partial ->
             MeetingRepository.update(id, persist = false) {
                 it.copy(
                     status = MeetingStatus.TRANSCRIBING,
@@ -162,6 +163,9 @@ class ProcessingService : LifecycleService() {
             !cancelled.get()
         }
         if (cancelled.get()) return
+        // Eigenes Wörterbuch: Namen und Fachbegriffe richtig schreiben
+        val segments = if (vocab.isEmpty()) raw
+        else raw.map { it.copy(text = de.protokollki.engine.Vocabulary.correct(it.text, vocab)) }
         // Nur Sprecher behalten, die tatsächlich Text haben
         val used = segments.map { it.speakerId }.toSet()
         MeetingRepository.update(id) {
@@ -174,6 +178,7 @@ class ProcessingService : LifecycleService() {
         val meeting = MeetingRepository.get(id) ?: return
         if (meeting.segments.isEmpty()) return
         progress(id, MeetingStatus.SUMMARIZING, 0f, "Lade Sprachmodell …")
+        de.protokollki.engine.AskEngine.releaseNow()   // nie zwei Sprachmodelle gleichzeitig im RAM
         val llm = LocalLlm(applicationContext, set)
         currentLlm = llm
         try {
@@ -191,6 +196,8 @@ class ProcessingService : LifecycleService() {
                 wantSummary = meeting.mode == ProtocolMode.ERGEBNIS,
                 agenda = meeting.agenda,
                 openTasks = openTasks,
+                template = meeting.template,
+                vocabulary = de.protokollki.engine.Vocabulary.terms(),
             ) { f, text ->
                 progress(id, MeetingStatus.SUMMARIZING, f, text)
                 !cancelled.get()

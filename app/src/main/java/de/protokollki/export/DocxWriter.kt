@@ -103,6 +103,7 @@ internal object DocxWriter {
                     ),
                 )
                 is Block.Note -> para(sb, "Note", listOf(Run(bl.text)))
+                is Block.Signatures -> signatures(sb, bl)
             }
         }
         sb.append("<w:sectPr>")
@@ -183,6 +184,56 @@ internal object DocxWriter {
         t.rows.forEach { row(it, false) }
         sb.append("</w:tbl>")
         // Word verlangt nach einer Tabelle einen Absatz vor dem nächsten Element/Ende
+        sb.append("<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr></w:p>")
+    }
+
+    /**
+     * Unterschriftsfeld: rahmenlose Tabelle mit zwei Spalten; je Feld Platz zum Unterschreiben,
+     * eine Linie (oberer Absatzrahmen), darunter „Ort, Datum“ und die Rolle.
+     */
+    private fun signatures(sb: StringBuilder, s: Block.Signatures) {
+        if (s.lines.isEmpty()) return
+        val gap = 567 // 1 cm
+        val col = (TEXT_WIDTH - gap) / 2
+        val widths = intArrayOf(col, gap, col)
+        sb.append("<w:p><w:pPr><w:spacing w:before=\"360\" w:after=\"0\"/></w:pPr></w:p>")
+        sb.append("<w:tbl><w:tblPr>")
+        sb.append("<w:tblW w:w=\"").append(widths.sum()).append("\" w:type=\"dxa\"/>")
+        sb.append("<w:tblBorders>")
+        for (side in listOf("top", "left", "bottom", "right", "insideH", "insideV")) {
+            sb.append("<w:").append(side).append(" w:val=\"nil\"/>")
+        }
+        sb.append("</w:tblBorders>")
+        sb.append("<w:tblLayout w:type=\"fixed\"/>")
+        sb.append("<w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar>")
+        sb.append("</w:tblPr><w:tblGrid>")
+        widths.forEach { sb.append("<w:gridCol w:w=\"").append(it).append("\"/>") }
+        sb.append("</w:tblGrid>")
+        s.lines.chunked(2).forEach { pair ->
+            sb.append("<w:tr><w:trPr><w:cantSplit/></w:trPr>")
+            for (i in 0 until 3) {
+                sb.append("<w:tc><w:tcPr><w:tcW w:w=\"").append(widths[i]).append("\" w:type=\"dxa\"/></w:tcPr>")
+                val line = when (i) {
+                    0 -> pair.getOrNull(0)
+                    2 -> pair.getOrNull(1)
+                    else -> null
+                }
+                if (line == null) {
+                    sb.append("<w:p/>")
+                } else {
+                    // Platz zum Unterschreiben
+                    sb.append("<w:p><w:pPr><w:keepNext/><w:spacing w:before=\"720\" w:after=\"0\"/></w:pPr></w:p>")
+                    sb.append("<w:p><w:pPr><w:keepNext/><w:pBdr><w:top w:val=\"single\" w:sz=\"6\" w:space=\"2\" w:color=\"374151\"/></w:pBdr>")
+                    sb.append("<w:spacing w:after=\"0\"/></w:pPr>")
+                    sb.append("<w:r><w:rPr><w:color w:val=\"6B7280\"/><w:sz w:val=\"18\"/><w:szCs w:val=\"18\"/></w:rPr>")
+                    sb.append("<w:t xml:space=\"preserve\">").append(xmlEscape(SIGNATURE_PLACE_DATE)).append("</w:t></w:r></w:p>")
+                    para(sb, "TableText", listOf(Run(line.label, bold = true)))
+                }
+                sb.append("</w:tc>")
+            }
+            sb.append("</w:tr>")
+        }
+        sb.append("</w:tbl>")
         sb.append("<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr></w:p>")
     }
 

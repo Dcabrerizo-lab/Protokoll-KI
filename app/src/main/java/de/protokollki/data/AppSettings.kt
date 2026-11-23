@@ -18,6 +18,9 @@ data class SettingsState(
     val audioRetentionDays: Int = 0,         // 0 = Audio behalten, sonst nach X Tagen löschen
     val customTerms: List<String> = emptyList(), // eigene Begriffe, die immer geschwärzt werden
     val trackTasks: Boolean = true,          // offene Aufgaben in Folgebesprechungen abgleichen
+    val defaultTemplate: ProtocolTemplate = ProtocolTemplate.ALLGEMEIN,
+    val vocabulary: List<String> = emptyList(), // eigene Fachbegriffe/Namen für bessere Erkennung
+    val organization: String = "",           // Name der Einrichtung (Kopfzeile formaler Protokolle)
 )
 
 object AppSettings {
@@ -41,6 +44,10 @@ object AppSettings {
             customTerms = (prefs.getString("customTerms", "") ?: "").split("\n")
                 .map { it.trim() }.filter { it.isNotEmpty() },
             trackTasks = prefs.getBoolean("trackTasks", true),
+            defaultTemplate = ProtocolTemplate.of(prefs.getString("defaultTemplate", null)),
+            vocabulary = (prefs.getString("vocabulary", "") ?: "").split("\n")
+                .map { it.trim() }.filter { it.isNotEmpty() },
+            organization = prefs.getString("organization", "") ?: "",
         )
     }
 
@@ -58,6 +65,9 @@ object AppSettings {
             .putInt("audioRetentionDays", s.audioRetentionDays)
             .putString("customTerms", s.customTerms.joinToString("\n"))
             .putBoolean("trackTasks", s.trackTasks)
+            .putString("defaultTemplate", s.defaultTemplate.name)
+            .putString("vocabulary", s.vocabulary.joinToString("\n"))
+            .putString("organization", s.organization)
             .apply()
     }
 }

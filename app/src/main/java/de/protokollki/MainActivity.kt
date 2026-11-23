@@ -135,7 +135,9 @@ class MainActivity : ComponentActivity() {
         }
         if (intent.action != Intent.ACTION_SEND) return
         val type = intent.type.orEmpty()
-        if (!type.startsWith("audio/") && !type.startsWith("video/")) return
+        val isDoc = runCatching { de.protokollki.importdoc.ProtocolImporter.isDocument(type, null) }
+            .getOrDefault(false)
+        if (!type.startsWith("audio/") && !type.startsWith("video/") && !isDoc) return
         val uri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
         if (uri != null) sharedUri.value = uri
     }

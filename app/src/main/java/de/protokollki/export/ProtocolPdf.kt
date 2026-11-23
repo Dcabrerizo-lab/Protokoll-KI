@@ -29,6 +29,8 @@ internal object ProtocolPdf {
     private const val CONTENT_W = PAGE_W - 2 * MARGIN
     private const val BOTTOM = PAGE_H - MARGIN
     private const val CELL_PAD = 4f
+    private const val SIGN_SPACE = 42f   // Platz zum Unterschreiben über der Linie
+    private const val SIGN_GAP = 36f     // Abstand zwischen zwei Unterschriftsfeldern
 
     private val ACCENT = Color.rgb(0x4F, 0x46, 0xE5)
     private val TEXT = Color.rgb(0x1F, 0x29, 0x37)
@@ -64,6 +66,14 @@ internal object ProtocolPdf {
 
     private class DividerItem(val height: Float, spaceBefore: Float) : Item(spaceBefore)
 
+    /** Bis zu zwei Unterschriftsfelder nebeneinander: Linie, darunter „Ort, Datum“ und die Rolle. */
+    private class SignatureRowItem(
+        val cells: List<Pair<StaticLayout, StaticLayout>>,
+        val colWidth: Float,
+        val height: Float,
+        spaceBefore: Float,
+    ) : Item(spaceBefore)
+
     private class Paints {
         val body = textPaint(10.5f, TEXT)
         val title = textPaint(20f, DARK, Typeface.DEFAULT_BOLD)
@@ -79,6 +89,11 @@ internal object ProtocolPdf {
             color = LINE; style = Paint.Style.STROKE; strokeWidth = 0.6f
         }
         val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = HEADER_FILL; style = Paint.Style.FILL }
+        val signLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = META; style = Paint.Style.STROKE; strokeWidth = 0.8f
+        }
+        val signSmall = textPaint(8.5f, MUTED)
+        val signRole = textPaint(10f, DARK, Typeface.DEFAULT_BOLD)
 
         private fun textPaint(size: Float, color: Int, tf: Typeface = Typeface.DEFAULT) =
             TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -183,6 +198,17 @@ internal object ProtocolPdf {
                     items += TextItem(layout(s, p.body, CONTENT_W), MARGIN, 6f)
                 }
                 is Block.Note -> items += TextItem(layout(b.text, p.note, CONTENT_W), MARGIN, 24f)
+                is Block.Signatures -> {
+                    val colW = (CONTENT_W - SIGN_GAP) / 2f
+                    b.lines.chunked(2).forEachIndexed { i, pair ->
+                        val cells = pair.map { l ->
+                            layout(SIGNATURE_PLACE_DATE, p.signSmall, colW) to layout(l.label, p.signRole, colW)
+                        }
+                        val h = SIGN_SPACE + 4f +
+                            (cells.maxOfOrNull { it.first.height + 2 + it.second.height } ?: 0)
+                        items += SignatureRowItem(cells, colW, h, if (i == 0) 28f else 18f)
+                    }
+                }
             }
         }
         return items
@@ -249,6 +275,13 @@ internal object ProtocolPdf {
                     }
                     placeRow(item)
                 }
+                is SignatureRowItem -> {
+                    if (!empty && y + item.height > BOTTOM) newPage()
+                    val yy = y
+                    cur.add { c -> drawSignatures(c, item, yy, p) }
+                    y += item.height
+                    empty = false
+                }
                 is DividerItem -> {
                     if (!empty && y + item.height > BOTTOM) newPage()
                     val yy = y + item.height / 2f
@@ -290,6 +323,20 @@ internal object ProtocolPdf {
             cell.draw(c)
             c.restore()
             x += row.widths[i]
+        }
+    }
+
+    private fun drawSignatures(c: Canvas, row: SignatureRowItem, y: Float, p: Paints) {
+        row.cells.forEachIndexed { i, (placeDate, role) ->
+            val x = MARGIN + i * (row.colWidth + SIGN_GAP)
+            val lineY = y + SIGN_SPACE
+            c.drawLine(x, lineY, x + row.colWidth, lineY, p.signLine)
+            c.save()
+            c.translate(x, lineY + 4f)
+            placeDate.draw(c)
+            c.translate(0f, placeDate.height + 2f)
+            role.draw(c)
+            c.restore()
         }
     }
 

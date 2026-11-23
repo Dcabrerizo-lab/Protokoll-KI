@@ -2,6 +2,7 @@ package de.protokollki.export
 
 import de.protokollki.data.Meeting
 import de.protokollki.data.ProtocolMode
+import de.protokollki.data.ProtocolTemplate
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -32,7 +33,29 @@ internal sealed class Block {
     ) : Block()
     data class Utterance(val speaker: String, val time: String, val text: String) : Block()
     data class Note(val text: String) : Block()
+    /** Unterschriftsfeld formaler Protokolle: je Rolle eine Linie mit „Ort, Datum“ und der Rolle darunter. */
+    data class Signatures(val lines: List<SignatureLine>) : Block()
 }
+
+/** Eine Unterschriftszeile: Rolle (z. B. „Sitzungsleitung“) und, falls bekannt, der Name. */
+internal data class SignatureLine(val role: String, val name: String = "") {
+    /** „Sitzungsleitung (Anna Schmidt)“ bzw. nur die Rolle. */
+    val label: String get() = if (name.isBlank()) role else "$role (${name.trim()})"
+}
+
+internal const val SIGNATURE_LINE = "______________________________"
+internal const val SIGNATURE_PLACE_DATE = "Ort, Datum"
+internal const val MINUTE_TAKER_ROLE = "Protokollführung"
+
+/**
+ * Bezeichnung der Leitung in formalen Protokollen ([Meeting.chair]): die erste Unterschriftsrolle
+ * der Vorlage, die nicht die Protokollführung ist („Sitzungsleitung“, „Leitung“ …).
+ */
+fun chairRole(t: ProtocolTemplate): String =
+    t.signatures.firstOrNull { it != MINUTE_TAKER_ROLE } ?: "Leitung"
+
+/** Formale Vorlagen erhalten Kopfblock und Unterschriftsfeld; „Allgemein“ bleibt wie bisher. */
+val ProtocolTemplate.isFormal: Boolean get() = this != ProtocolTemplate.ALLGEMEIN
 
 internal val TASK_HEADER = listOf("Nr.", "Aufgabe", "Verantwortlich", "Frist", "Erledigt")
 internal val TASK_WEIGHTS = listOf(0.07f, 0.45f, 0.2f, 0.16f, 0.12f)
@@ -104,13 +127,71 @@ internal fun followUpRows(m: Meeting): List<List<String>> =
         )
     }
 
-/** Baut die Abschnitte des Protokolls. */
-internal fun buildBlocks(m: Meeting, tz: TimeZone = TimeZone.getDefault()): List<Block> {
+/** „01.01.1970“ */
+internal fun formatDay(epochMs: Long, tz: TimeZone = TimeZone.getDefault()): String {
+    val f = SimpleDateFormat("dd.MM.yyyy", Locale.GERMANY)
+    f.timeZone = tz
+    return f.format(Date(epochMs))
+}
+
+/** „14:00 – 15:02 Uhr“ (Beginn bis Ende der Aufnahme), ohne Dauer nur „14:00 Uhr“. */
+internal fun formatTimeRange(epochMs: Long, durationSec: Float, tz: TimeZone = TimeZone.getDefault()): String {
+    val f = SimpleDateFormat("HH:mm", Locale.GERMANY)
+    f.timeZone = tz
+    val start = f.format(Date(epochMs))
+    val dur = if (durationSec.isNaN() || durationSec < 60f) 0L else Math.round(durationSec.toDouble()) * 1000L
+    return if (dur <= 0L) "$start Uhr" else "$start – ${f.format(Date(epochMs + dur))} Uhr"
+}
+
+/** Kopf formaler Protokolle; leere Angaben entfallen. */
+internal fun formalHeader(m: Meeting, organization: String, tz: TimeZone): List<Block.Meta> {
+    val meta = mutableListOf<Block.Meta>()
+    fun add(label: String, value: String) {
+        if (value.isNotBlank()) meta += Block.Meta(label, value.trim())
+    }
+    add("Einrichtung", organization)
+    add("Datum", formatDay(m.createdAt, tz))
+    add("Uhrzeit", formatTimeRange(m.createdAt, m.durationSec, tz))
+    add("Ort", m.location)
+    add(chairRole(m.template), m.chair)
+    add(MINUTE_TAKER_ROLE, m.minuteTaker)
+    add("Teilnehmende", participants(m).joinToString(", "))
+    return meta
+}
+
+/** Unterschriftszeilen der Vorlage, Namen aus Leitung/Protokollführung vorbelegt. */
+internal fun signatureLines(m: Meeting): List<SignatureLine> {
+    val chair = chairRole(m.template)
+    return m.template.signatures.map { role ->
+        val name = when (role) {
+            MINUTE_TAKER_ROLE -> m.minuteTaker
+            chair -> m.chair
+            else -> ""
+        }
+        SignatureLine(role, name.trim())
+    }
+}
+
+/**
+ * Baut die Abschnitte des Protokolls. [organization] (Einrichtung aus den Einstellungen)
+ * erscheint nur im Kopf formaler Vorlagen.
+ */
+internal fun buildBlocks(
+    m: Meeting,
+    tz: TimeZone = TimeZone.getDefault(),
+    organization: String = "",
+): List<Block> {
     val b = mutableListOf<Block>()
-    b += Block.Title(m.mode.label, m.title.ifBlank { "Besprechung" })
-    b += Block.Meta("Datum", formatDate(m.createdAt, tz))
-    b += Block.Meta("Dauer", formatDuration(m.durationSec))
-    b += Block.Meta("Teilnehmende", participants(m).joinToString(", ").ifBlank { "–" })
+    val formal = m.template.isFormal
+    if (formal) {
+        b += Block.Title(m.template.documentTitle, m.title.ifBlank { "Besprechung" })
+        b += formalHeader(m, organization, tz)
+    } else {
+        b += Block.Title(m.mode.label, m.title.ifBlank { "Besprechung" })
+        b += Block.Meta("Datum", formatDate(m.createdAt, tz))
+        b += Block.Meta("Dauer", formatDuration(m.durationSec))
+        b += Block.Meta("Teilnehmende", participants(m).joinToString(", ").ifBlank { "–" })
+    }
     b += Block.Divider
 
     val agenda = m.agenda.map { it.trim() }.filter { it.isNotEmpty() }
@@ -164,6 +245,7 @@ internal fun buildBlocks(m: Meeting, tz: TimeZone = TimeZone.getDefault()): List
             }
         }
     }
+    if (formal && m.template.signatures.isNotEmpty()) b += Block.Signatures(signatureLines(m))
     b += Block.Note(FOOTER_NOTE)
     return b
 }
@@ -215,6 +297,15 @@ internal fun renderPlainText(blocks: List<Block>): String {
             is Block.Note -> {
                 trimBlankLines(sb)
                 sb.append("\n\n---\n").append(bl.text).append('\n')
+            }
+            is Block.Signatures -> {
+                trimBlankLines(sb)
+                sb.append('\n')
+                bl.lines.forEach { l ->
+                    sb.append("\n\n\n").append(SIGNATURE_LINE).append('\n')
+                    sb.append(SIGNATURE_PLACE_DATE).append('\n')
+                    sb.append(l.label).append('\n')
+                }
             }
         }
     }
@@ -278,6 +369,17 @@ internal fun renderMarkdown(blocks: List<Block>): String {
                     .append(mdEscape(bl.text)).append("\n\n")
             }
             is Block.Note -> { endList(); sb.append("---\n\n*").append(mdEscape(bl.text)).append("*\n") }
+            is Block.Signatures -> {
+                endList()
+                // Eine Zeile nur aus Unterstrichen wäre in Markdown eine Trennlinie – daher maskiert
+                bl.lines.forEach { l ->
+                    sb.append("\n").append(mdEscape(SIGNATURE_LINE)).append("  \n")
+                    sb.append(mdEscape(SIGNATURE_PLACE_DATE)).append("  \n")
+                    sb.append("**").append(mdEscape(l.role)).append("**")
+                    if (l.name.isNotBlank()) sb.append(" (").append(mdEscape(l.name)).append(')')
+                    sb.append("\n\n")
+                }
+            }
         }
     }
     return sb.toString()

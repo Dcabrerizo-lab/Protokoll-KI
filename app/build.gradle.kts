@@ -109,6 +109,10 @@ dependencies {
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.apache.commons:commons-compress:1.27.1")
+    // Text aus importierten PDF-Protokollen (ohne Verschlüsselungs-Unterstützung, spart ~8 MB)
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0") {
+        exclude(group = "org.bouncycastle")
+    }
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
