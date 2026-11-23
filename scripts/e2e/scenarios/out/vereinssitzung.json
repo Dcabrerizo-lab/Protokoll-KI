@@ -95,5 +95,10 @@
   ],
   "vote_format": true,
   "agenda_topics": true
- }
+ },
+ "vocabulary": [
+  "Schröder",
+  "Ordnungsamt",
+  "Förderverein"
+ ]
 }

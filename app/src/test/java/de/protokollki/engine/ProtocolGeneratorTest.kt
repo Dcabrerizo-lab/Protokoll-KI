@@ -180,4 +180,19 @@ class ProtocolGeneratorTest {
         val name = { id: Int -> "Person ${id + 1}" }
         assertEquals("Frau Schmidt", ProtocolGenerator.resolveOwner("Sie", 1, segs, name))
     }
+
+    @Test
+    fun missingRefIsLocatedAndOwnerTakenFromTaskText() {
+        val segs = listOf(
+            Segment(0, 0f, 3f, "Guten Morgen, wir sprechen über den Umzug."),
+            Segment(0, 3f, 6f, "Frau Becker, können Sie bis Freitag drei Angebote für die Möbel einholen?"),
+            Segment(1, 6f, 8f, "Ja, das mache ich."),
+        )
+        assertEquals(1, ProtocolGenerator.locateRef("Drei Angebote für Möbel einholen", segs))
+        assertEquals(-1, ProtocolGenerator.locateRef("Kaffee kaufen", segs))
+        val name = { id: Int -> "Person ${id + 1}" }
+        assertEquals("Herr Wagner", ProtocolGenerator.resolveOwner("Person 1", -1, segs, name,
+            "Herr Wagner Telefonanlage klären mit Anbieter"))
+        assertEquals("Frau Becker", ProtocolGenerator.resolveOwner("Person 3", 1, segs, name, "Angebote einholen"))
+    }
 }

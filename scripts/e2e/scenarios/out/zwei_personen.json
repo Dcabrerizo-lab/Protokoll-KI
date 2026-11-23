@@ -49,5 +49,8 @@
   ],
   "min_tasks": 1,
   "decisions_any": []
- }
+ },
+ "vocabulary": [
+  "Kaiser"
+ ]
 }

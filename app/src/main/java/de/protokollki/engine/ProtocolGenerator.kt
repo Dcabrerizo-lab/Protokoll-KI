@@ -142,7 +142,8 @@ class ProtocolGenerator(private val model: TextModel) {
         val summary = if (wantSummary) parseSummary(raws.first(), n) else Summary()
         val tasks = raws.flatMap { parseTasks(it, n) }
             .map { it.copy(due = DateResolver.resolve(it.due, meetingDate)) }
-            .map { it.copy(owner = resolveOwner(it.owner, it.ref, segments, ::nameOf)) }
+            .map { if (it.ref < 0) it.copy(ref = locateRef(it.text, segments)) else it }
+            .map { it.copy(owner = resolveOwner(it.owner, it.ref, segments, ::nameOf, it.text)) }
         val doneKeys = mutableMapOf<String, Int>()
         raws.forEach { r -> parseCompleted(r, n).forEach { (k, ref) -> doneKeys.putIfAbsent(k, ref) } }
         val completed = openTasks.filter { it.key in doneKeys }
@@ -299,9 +300,14 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
          * Sie …"), die eine andere Person an diese richtet, wird dieser Name übernommen.
          */
         internal fun resolveOwner(owner: String, ref: Int, segments: List<Segment>,
-                                  nameOf: (Int) -> String): String {
+                                  nameOf: (Int) -> String, taskText: String = ""): String {
             val o = owner.trim()
-            if (!GENERIC.matches(o) || ref !in segments.indices) return owner
+            if (!GENERIC.matches(o)) return owner
+            // Name steht in der Aufgabe selbst ("Herr Wagner klärt die Telefonanlage")
+            ADDRESS.find(taskText)?.let { m ->
+                return (if (m.groupValues[1] == "Herrn") "Herr" else m.groupValues[1]) + " " + m.groupValues[2]
+            }
+            if (ref !in segments.indices) return owner
             for (i in listOf(ref, ref - 1)) {
                 val seg = segments.getOrNull(i) ?: continue
                 val m = ADDRESS.find(seg.text) ?: continue
@@ -312,6 +318,28 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
                 return name
             }
             return owner
+        }
+
+        private val WORD = Regex("[\\p{L}\\d]{4,}")
+        private val STOP = setOf("bitte", "sich", "sind", "wird", "werden", "noch", "dann", "auch", "eine",
+            "einen", "einer", "dass", "diese", "dieser", "nicht", "habe", "haben", "kann", "können", "sollen")
+
+        private fun words(t: String) = WORD.findAll(t.lowercase()).map { it.value.take(6) }
+            .filter { it !in STOP }.toSet()
+
+        /**
+         * Fehlt die Quellenangabe einer Aufgabe, wird der Redebeitrag mit den meisten gemeinsamen
+         * Wörtern als Beleg gesetzt (mindestens zwei, Wortanfänge verglichen). Sonst -1.
+         */
+        internal fun locateRef(taskText: String, segments: List<Segment>): Int {
+            val w = words(taskText)
+            if (w.size < 2) return -1
+            var best = -1; var bestScore = 1
+            segments.forEachIndexed { i, s ->
+                val score = words(s.text).count { it in w }
+                if (score > bestScore) { best = i; bestScore = score }
+            }
+            return best
         }
 
         // ------------------------------------------------------------ Parsing

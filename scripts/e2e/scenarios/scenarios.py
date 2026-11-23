@@ -106,4 +106,7 @@ SCENARIOS = {
 }
 
 # Lange Besprechung: Basisszenarien hintereinander (ca. 6 bis 7 Minuten)
+# Eigene Begriffe (Einstellungen > Fachbegriffe), wie ein Pflegedienst sie pflegen würde
+VOCABULARY = {"zwei_personen": ["Kaiser"], "drei_personen": ["Becker", "Wagner", "Tour Nord"], "folgesitzung": ["Becker", "Wagner", "Holzmann"], "vereinssitzung": ["Schröder", "Ordnungsamt", "Förderverein"], "fallbesprechung": ["Schmidt", "Yilmaz", "Krüger", "Pflegekasse"], "uebergabe": ["Lehmann", "Becker"], "drei_personen_laerm": ["Becker", "Wagner", "Tour Nord"], "drei_personen_leise": ["Becker", "Wagner", "Tour Nord"], "lang": ["Becker", "Förderverein", "Krüger", "Lehmann", "Ordnungsamt", "Pflegekasse", "Schmidt", "Schröder", "Tour Nord", "Wagner", "Yilmaz"]}
+
 LONG_PARTS = ["drei_personen", "vereinssitzung", "fallbesprechung", "drei_personen", "uebergabe"]

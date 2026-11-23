@@ -131,7 +131,10 @@ class MainActivity : ComponentActivity() {
             intent.getStringExtra("model_set")?.let { de.protokollki.engine.ModelManager.selectSet(it) }
             val template = de.protokollki.data.ProtocolTemplate.of(intent.getStringExtra("template"))
             de.protokollki.data.AppSettings.update {
-                it.copy(onboardingDone = true, autoProcess = true, defaultTemplate = template)
+                val vocab = intent.getStringExtra("vocabulary")
+                    ?.split("|")?.map { v -> v.trim() }?.filter { v -> v.isNotEmpty() }
+                it.copy(onboardingDone = true, autoProcess = true, defaultTemplate = template,
+                    vocabulary = vocab ?: it.vocabulary)
             }
             DebugHooks.pendingAgenda = intent.getStringExtra("agenda")
                 ?.split("|")?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() }

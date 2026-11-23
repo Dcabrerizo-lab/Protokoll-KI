@@ -283,5 +283,18 @@
   ],
   "min_tasks": 4,
   "decisions_any": []
- }
+ },
+ "vocabulary": [
+  "Becker",
+  "Förderverein",
+  "Krüger",
+  "Lehmann",
+  "Ordnungsamt",
+  "Pflegekasse",
+  "Schmidt",
+  "Schröder",
+  "Tour Nord",
+  "Wagner",
+  "Yilmaz"
+ ]
 }

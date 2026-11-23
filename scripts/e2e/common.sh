@@ -37,12 +37,14 @@ status_of() { meeting_json "$1" | python3 -c "import sys,json; print(json.loads(
 # $1 Datei, $2 Modellpaket, $3 Vorlage, $4 Tagesordnung (mit | getrennt), $5 Timeout in s
 import_and_wait() {
   local file=$1 set=$2 tpl=${3:-ALLGEMEIN} agenda=${4:-} timeout=${5:-1500}
+  # Fachbegriffe aus der Szenario-Beschreibung neben der Datei (wie in den Einstellungen gepflegt)
+  local vocab=""; [ -f "${file%.*}.json" ] && vocab=$(python3 -c "import json,sys;print('|'.join(json.load(open(sys.argv[1])).get('vocabulary',[])))" "${file%.*}.json")
   local name; name=$(basename "$file")
   push_app "$file" "files/in/$name"
   local before; before=$(newest_meeting)
   adb shell am start -n $PKG/.MainActivity -a de.protokollki.DEBUG_IMPORT \
     --es path "/data/data/$PKG/files/in/$name" --es model_set "$set" --es template "$tpl" \
-    ${agenda:+--es agenda "'$agenda'"} > /dev/null
+    ${agenda:+--es agenda "'$agenda'"} ${vocab:+--es vocabulary "'$vocab'"} > /dev/null
   local id="" t0=$SECONDS dead=0 st=""
   for _ in $(seq 1 30); do sleep 2; id=$(newest_meeting); [ -n "$id" ] && [ "$id" != "$before" ] && break; done
   if [ -z "$id" ] || [ "$id" = "$before" ]; then echo ""; return 1; fi

@@ -14,7 +14,7 @@ import sherpa_onnx
 import soundfile as sf
 
 sys.path.insert(0, os.path.dirname(__file__))
-from scenarios import LONG_PARTS, SCENARIOS, VOICES  # noqa: E402
+from scenarios import LONG_PARTS, SCENARIOS, VOCABULARY, VOICES  # noqa: E402
 
 VOICE_DIR, OUT = sys.argv[1], sys.argv[2]
 os.makedirs(OUT, exist_ok=True)
@@ -48,6 +48,7 @@ def synth(lines, speed=1.05):
 
 
 def write(name, audio, meta):
+    meta = {**meta, "vocabulary": VOCABULARY.get(name, [])}
     sf.write(f"{OUT}/{name}.wav", np.clip(audio, -1, 1), 16000, subtype="PCM_16")
     json.dump(meta, open(f"{OUT}/{name}.json", "w"), ensure_ascii=False, indent=1)
     print(f"{name}: {len(audio) / 16000:.1f} s")
