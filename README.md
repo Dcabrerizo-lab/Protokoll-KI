@@ -10,6 +10,17 @@ Keine Cloud, kein Konto, keine Daten verlassen das Gerät.
 - **Ergebnisprotokoll** (Zusammenfassung, Themen, Beschlüsse, offene Punkte) oder **Wortprotokoll**
 - **Aufgaben**: wer macht was bis wann, abhakbar
 - **Export** als PDF, Word, Markdown oder Text
+- **Aufgaben-Verfolgung** über Besprechungen hinweg: offene Aufgaben werden abgeglichen und automatisch abgehakt
+- **Fragen an alle Besprechungen**: Volltextsuche plus KI-Antwort mit Quellen, ein Tipp springt zur Stelle
+- **Quellenangabe**: jeder Protokollpunkt springt zur passenden Stelle in Aufnahme und Transkript
+- **Formale Vorlagen**: Dienst-/Fallbesprechung, Übergabe, Vereinssitzung (Abstimmungen), mit Unterschriftsfeld
+- **Tagesordnung** vorab eingeben, das Protokoll folgt den TOPs
+- **Stimmprofile**: bekannte Stimmen werden automatisch mit Namen erkannt
+- **Eigenes Wörterbuch** für Namen und Fachbegriffe
+- **Vorlesen** von Protokoll und Aufgaben (Offline-Sprachausgabe)
+- **Anonymisierter Export**: Namen, Telefon, E-Mail, IBAN, Adressen, Geburtsdaten werden geschwärzt
+- **Import alter Protokolle** (PDF, Word, Text): durchsuchbar, Aufgaben werden übernommen
+- **Datenschutz-Paket**: App-Sperre, Screenshot-Schutz, Löschfrist für Audio, Datenschutz-Nachweis als PDF, alles löschen
 
 ## Installation
 1. Auf dem Handy die [neueste Version](../../releases/tag/latest) öffnen und `ProtokollKI.apk` herunterladen.
