@@ -171,6 +171,7 @@ fun AppNavigation(
                 meetingId = id,
                 onBack = { nav.popBackStack() },
                 onOpenRecording = { nav.navigate(Routes.RECORDING) { launchSingleTop = true } },
+                onOpenSettings = { nav.navigate(Routes.SETTINGS) { launchSingleTop = true } },
             )
         }
         composable(Routes.SETTINGS) {

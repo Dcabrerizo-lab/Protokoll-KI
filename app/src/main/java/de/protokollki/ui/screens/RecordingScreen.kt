@@ -72,6 +72,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.protokollki.audio.Recorder
 import de.protokollki.data.AppSettings
 import de.protokollki.data.MeetingRepository
+import de.protokollki.data.MeetingStatus
 import de.protokollki.ui.components.formatClock
 import de.protokollki.ui.hasPermission
 import de.protokollki.ui.openAppSettings
@@ -108,9 +109,11 @@ fun RecordingScreen(
 
     fun startRecording() {
         try {
-            meetingId = Recorder.start(context)
+            val id = Recorder.start(context)
+            meetingId = id
             permissionDenied = false
-            startError = null
+            startError = if (Recorder.state.value.active) null
+            else MeetingRepository.get(id)?.error ?: "Die Aufnahme konnte nicht gestartet werden."
         } catch (e: Exception) {
             startError = e.message ?: "Die Aufnahme konnte nicht gestartet werden."
         }
@@ -161,11 +164,14 @@ fun RecordingScreen(
             if (autoBefore) AppSettings.update { it.copy(autoProcess = false) }
             runCatching { Recorder.stop(context) }
             CoroutineScope(Dispatchers.Main).launch {
+                // Warten, bis der Aufnahme-Thread die Datei abgeschlossen hat
                 var waited = 0
-                while (Recorder.state.value.active && waited < 5000) {
+                while (id != null && waited < 6000 &&
+                    MeetingRepository.get(id)?.status == MeetingStatus.RECORDING
+                ) {
                     delay(100); waited += 100
                 }
-                delay(500)
+                delay(300)
                 if (id != null) runCatching { MeetingRepository.delete(id) }
                 if (autoBefore) AppSettings.update { it.copy(autoProcess = true) }
             }
