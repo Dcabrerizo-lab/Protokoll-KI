@@ -52,9 +52,7 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
         )
         val sd = OfflineSpeakerDiarization(config = config)
         try {
-            val result = sd.processWithCallback(samples, callback = { done, total, _ ->
-                if (onProgress(if (total > 0) done.toFloat() / total else 0f)) 0 else 1
-            })
+            val result = sd.processWithCallback(samples, callback = DiarizationCallback(onProgress))
             return result.sortedBy { it.start }.map { Turn(it.start, it.end, it.speaker) }
         } finally {
             sd.release()
@@ -206,4 +204,15 @@ object TextCleanup {
         if (words.size >= 8 && words.toSet().size <= 2) return true
         return false
     }
+}
+
+/**
+ * Fortschritts-Callback für sherpa-onnx. Die native Seite sucht per JNI exakt die Methode
+ * `invoke(IIJ)Ljava/lang/Integer;`. Ein Kotlin-Lambda hat nur `invoke(Object, Object, Object)`
+ * und führt zum Absturz ("JNI DETECTED ERROR"). Diese Klasse erzeugt die passende Signatur
+ * (geprüft mit javap: `public java.lang.Integer invoke(int, int, long)`).
+ */
+class DiarizationCallback(private val onProgress: (Float) -> Boolean) : (Int, Int, Long) -> Int? {
+    override fun invoke(done: Int, total: Int, arg: Long): Int? =
+        if (onProgress(if (total > 0) done.toFloat() / total else 0f)) 0 else 1
 }
