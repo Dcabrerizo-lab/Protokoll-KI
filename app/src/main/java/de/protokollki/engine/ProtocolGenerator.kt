@@ -59,13 +59,13 @@ class ProtocolGenerator(private val model: TextModel) {
 
         val material: String
         val tasks = mutableListOf<TaskItem>()
-        val steps = (if (chunks.size > 1) chunks.size else 0) + (if (wantSummary) 1 else 0) +
-            chunks.size
+        val steps = (if (chunks.size > 1) chunks.size else 0) +
+            (if (wantSummary) 1 else chunks.size)
         var step = 0
         fun prog(text: String, inner: Float = 0f): Boolean =
             progress.update(((step + inner) / steps).coerceIn(0f, 1f), text)
 
-        if (chunks.size == 1) {
+        if (chunks.size == 1 || !wantSummary) {
             material = "Transkript:\n" + chunks[0]
         } else {
             val notes = chunks.mapIndexed { i, c ->
@@ -80,26 +80,31 @@ class ProtocolGenerator(private val model: TextModel) {
         }
 
         var summary = Summary()
+        val meetingDate = java.time.Instant.ofEpochMilli(dateMillis)
+            .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
         if (wantSummary) {
-            val label = "Schreibe Ergebnisprotokoll …"
+            // Ein Durchgang für Protokoll UND Aufgaben (halbiert die Rechenzeit)
+            val label = "Schreibe Protokoll und Aufgaben …"
             if (!prog(label)) throw LlmException("Abgebrochen")
             val raw = model.complete(SYSTEM, SUMMARY_PROMPT.format(header, material),
-                1800, 0.2f, SUMMARY_GRAMMAR, llmProgress { prog(label, it) })
+                2200, 0.2f, SUMMARY_GRAMMAR, llmProgress { prog(label, it) })
             summary = parseSummary(raw)
-            step++
-        }
-
-        for ((i, c) in chunks.withIndex()) {
-            val label = if (chunks.size > 1) "Ermittle Aufgaben (${i + 1}/${chunks.size}) …"
-            else "Ermittle Aufgaben …"
-            if (!prog(label)) throw LlmException("Abgebrochen")
-            val raw = model.complete(SYSTEM, TASKS_PROMPT.format(header, c),
-                1200, 0.0f, TASKS_GRAMMAR, llmProgress { prog(label, it) })
             tasks += parseTasks(raw, participants)
             step++
+        } else {
+            for ((i, c) in chunks.withIndex()) {
+                val label = if (chunks.size > 1) "Ermittle Aufgaben (${i + 1}/${chunks.size}) …"
+                else "Ermittle Aufgaben …"
+                if (!prog(label)) throw LlmException("Abgebrochen")
+                val raw = model.complete(SYSTEM, TASKS_PROMPT.format(header, c),
+                    1200, 0.0f, TASKS_GRAMMAR, llmProgress { prog(label, it) })
+                tasks += parseTasks(raw, participants)
+                step++
+            }
         }
+        val resolved = tasks.map { it.copy(due = DateResolver.resolve(it.due, meetingDate)) }
         progress.update(1f, "Fertig")
-        return Result(summary, dedupe(tasks))
+        return Result(summary, dedupe(resolved))
     }
 
     private fun llmProgress(onFraction: (Float) -> Boolean) = LlmProgress { phase, done, total ->
@@ -147,32 +152,30 @@ Transkript:
 %s
 """.trimIndent()
 
+        private const val TASK_RULES = """Regeln für "aufgaben" (alles, was jemand erledigen soll oder zugesagt hat):
+- "aufgabe": kurz und konkret, mit dem Verb am Ende (z. B. "Drei Angebote für Möbel einholen").
+- "verantwortlich": Name der zuständigen Person, wie er im Gespräch fällt (wird jemand mit "Frau X" oder "Herr Y" angesprochen, diesen Namen verwenden). Sagt jemand "mache ich", ist es die sprechende Person. Unklar: "offen".
+- "frist": die Zeitangabe GENAU so, wie sie im Gespräch genannt wurde (z. B. "Freitag", "Ende Januar", "15. Januar", "nächste Sitzung"). NICHT selbst in ein Datum umrechnen. Keine Angabe: "offen".
+- Nur echte Aufgaben, nichts erfinden."""
+
         val SUMMARY_PROMPT = """
 %s
 
 Erstelle aus dem folgenden Material ein professionelles Ergebnisprotokoll als JSON:
 - "zusammenfassung": 3 bis 5 Sätze, worum es ging und was herauskam.
-- "themen": die besprochenen Themen in zeitlicher Reihenfolge. Je Thema ein kurzer "titel" und 2 bis 6 "punkte" mit den Ergebnissen, Argumenten und Zahlen (vollständige, knappe Sätze).
-- "beschluesse": alle getroffenen Entscheidungen als klare Sätze (leere Liste, wenn keine).
-- "offene_punkte": ungeklärte Fragen und vertagte Themen (leere Liste, wenn keine).
-Aufgaben gehören NICHT hierher, die werden separat erfasst.
+- "themen": die besprochenen Themen in zeitlicher Reihenfolge. Je Thema ein kurzer "titel" und 2 bis 6 "punkte" mit Ergebnissen, Argumenten und Zahlen (vollständige, knappe Sätze).
+- "beschluesse": Entscheidungen, die die Runde getroffen hat (z. B. "Ab März wird ..."). Reine Aufgabenverteilungen gehören NICHT hierher, sondern zu "aufgaben". Leere Liste, wenn keine.
+- "offene_punkte": ungeklärte Fragen und vertagte Themen. Leere Liste, wenn keine.
+- "aufgaben": siehe Regeln.
 
-%s
-""".trimIndent()
+""".trimIndent() + "\n" + TASK_RULES + "\n\n%s"
 
         val TASKS_PROMPT = """
 %s
 
-Extrahiere alle Aufgaben, die in diesem Gespräch vereinbart, zugesagt oder jemandem zugewiesen wurden, als JSON {"aufgaben": [...]}.
-Regeln:
-- "aufgabe": kurz und konkret, mit einem Verb am Ende (z. B. "Drei Angebote für Möbel einholen").
-- "verantwortlich": Name der zuständigen Person wie im Transkript genannt (auch wenn sie mit "Frau X"/"Herr Y" angesprochen wird, diesen Namen verwenden). Sagt jemand "mache ich", ist es die sprechende Person. Unklar: "offen".
-- "frist": Datum als TT.MM.JJJJ, wenn ableitbar (relative Angaben wie "bis Freitag" oder "Ende Januar" vom Besprechungsdatum aus umrechnen), sonst die genannte Formulierung, sonst "offen".
-- Nur echte Aufgaben, nichts erfinden. Keine Aufgaben: {"aufgaben": []}
+Extrahiere alle Aufgaben, die in diesem Gespräch vereinbart, zugesagt oder jemandem zugewiesen wurden, als JSON {"aufgaben": [...]}. Keine Aufgaben: {"aufgaben": []}
 
-Transkript:
-%s
-""".trimIndent()
+""".trimIndent() + "\n" + TASK_RULES + "\n\nTranskript:\n%s"
 
         private const val JSON_STRING =
             "string ::= \"\\\"\" ( [^\"\\\\\\x7F\\x00-\\x1F] | \"\\\\\" ([\"\\\\/bfnrt] | \"u\" [0-9a-fA-F]{4}) )* \"\\\"\"\n" +
@@ -180,7 +183,9 @@ Transkript:
                 "strlist ::= \"[\" ws ( string ws (\",\" ws string ws)* )? \"]\"\n"
 
         val SUMMARY_GRAMMAR = """
-root ::= "{" ws "\"zusammenfassung\":" ws string ws "," ws "\"themen\":" ws themen ws "," ws "\"beschluesse\":" ws strlist ws "," ws "\"offene_punkte\":" ws strlist ws "}"
+root ::= "{" ws "\"zusammenfassung\":" ws string ws "," ws "\"themen\":" ws themen ws "," ws "\"beschluesse\":" ws strlist ws "," ws "\"offene_punkte\":" ws strlist ws "," ws "\"aufgaben\":" ws tasks ws "}"
+tasks ::= "[" ws ( task ws ("," ws task ws)* )? "]"
+task ::= "{" ws "\"aufgabe\":" ws string ws "," ws "\"verantwortlich\":" ws string ws "," ws "\"frist\":" ws string ws "}"
 themen ::= "[" ws ( thema ws ("," ws thema ws)* )? "]"
 thema ::= "{" ws "\"titel\":" ws string ws "," ws "\"punkte\":" ws strlist ws "}"
 """.trimIndent() + "\n" + JSON_STRING
