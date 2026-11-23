@@ -46,12 +46,17 @@ adb shell am start -n $PKG/.MainActivity -a de.protokollki.DEBUG_IMPORT \
 sleep 10; shot 02-verarbeitung-start
 
 status=""
+dead=0
 for i in $(seq 1 150); do
   json=$(adb shell "run-as $PKG sh -c 'cat files/meetings/*/meeting.json'" 2>/dev/null)
   status=$(echo "$json" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('status',''))" 2>/dev/null)
   echo "[$i] Status: $status"
   if [ "$i" = "6" ]; then shot 03-verarbeitung-laeuft; fi
   if [ "$status" = "DONE" ] || [ "$status" = "ERROR" ]; then break; fi
+  # App abgestürzt? Dann nicht weiter warten.
+  if [ -z "$(adb shell pidof $PKG 2>/dev/null | tr -d '\r')" ]; then
+    dead=$((dead+1)); if [ "$dead" -ge 2 ]; then echo "App-Prozess beendet (Absturz)"; break; fi
+  else dead=0; fi
   sleep 10
 done
 echo "$json" > "$OUT/meeting.json"
@@ -61,7 +66,10 @@ tap_text "Aufgaben"; shot 06-aufgaben
 adb shell input keyevent KEYCODE_BACK; sleep 3; shot 07-start
 tap_text "Einstellungen"; shot 08-einstellungen
 adb logcat -d > "$OUT/logcat.txt"
-grep -E "FATAL|AndroidRuntime|ProtokollKI" "$OUT/logcat.txt" | tail -50
+echo "=== Absturzursache ==="
+grep -E "JNI DETECTED|Abort message|Check failed|java_vm_ext|FATAL EXCEPTION|Caused by|at de\.protokollki|at com\.k2fsa|signal [0-9]+ \(SIG" "$OUT/logcat.txt" | awk '!seen[$0]++' | head -60
+grep -E " F de\.protokollki" "$OUT/logcat.txt" | sed -E 's/^.{31}//' | awk '!seen[$0]++' | head -40
+grep -E "ProtokollKI" "$OUT/logcat.txt" | tail -30
 python3 -c "
 import json; m=json.load(open('$OUT/meeting.json'))
 print('STATUS', m['status'], m.get('error'))
