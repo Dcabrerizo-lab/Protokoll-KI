@@ -37,6 +37,11 @@ internal sealed class Block {
 internal val TASK_HEADER = listOf("Nr.", "Aufgabe", "Verantwortlich", "Frist", "Erledigt")
 internal val TASK_WEIGHTS = listOf(0.07f, 0.45f, 0.2f, 0.16f, 0.12f)
 
+internal const val AGENDA_HEADING = "Tagesordnung"
+internal const val FOLLOWUP_HEADING = "Stand offener Aufgaben aus früheren Besprechungen"
+internal val FOLLOWUP_HEADER = listOf("Aufgabe", "Verantwortlich", "Stand")
+internal val FOLLOWUP_WEIGHTS = listOf(0.58f, 0.24f, 0.18f)
+
 /** Teilnehmende in Reihenfolge des ersten Redebeitrags; ohne Transkript die Sprecherliste. */
 internal fun participants(m: Meeting): List<String> {
     val fromSegments = m.segments.map { it.speakerId }.distinct().map { m.speakerName(it) }
@@ -90,6 +95,15 @@ internal fun taskRows(m: Meeting): List<List<String>> = m.tasks.mapIndexed { i, 
     )
 }
 
+internal fun followUpRows(m: Meeting): List<List<String>> =
+    m.followUps.filter { it.text.isNotBlank() }.map { f ->
+        listOf(
+            f.text.trim(),
+            f.owner.trim().ifBlank { "offen" },
+            if (f.done) "erledigt" else "offen",
+        )
+    }
+
 /** Baut die Abschnitte des Protokolls. */
 internal fun buildBlocks(m: Meeting, tz: TimeZone = TimeZone.getDefault()): List<Block> {
     val b = mutableListOf<Block>()
@@ -99,10 +113,21 @@ internal fun buildBlocks(m: Meeting, tz: TimeZone = TimeZone.getDefault()): List
     b += Block.Meta("Teilnehmende", participants(m).joinToString(", ").ifBlank { "–" })
     b += Block.Divider
 
+    val agenda = m.agenda.map { it.trim() }.filter { it.isNotEmpty() }
+    if (agenda.isNotEmpty()) {
+        b += Block.Heading(AGENDA_HEADING)
+        agenda.forEachIndexed { i, a -> b += Block.Numbered(i + 1, a) }
+    }
+
     fun tasks() {
         b += Block.Heading("Aufgaben")
         if (m.tasks.isEmpty()) b += Block.Paragraph("Keine Aufgaben erfasst.")
         else b += Block.Table(TASK_HEADER, taskRows(m), TASK_WEIGHTS)
+        val follow = followUpRows(m)
+        if (follow.isNotEmpty()) {
+            b += Block.Heading(FOLLOWUP_HEADING)
+            b += Block.Table(FOLLOWUP_HEADER, follow, FOLLOWUP_WEIGHTS)
+        }
     }
 
     when (m.mode) {
@@ -165,13 +190,25 @@ internal fun renderPlainText(blocks: List<Block>): String {
             is Block.Paragraph -> sb.append(bl.text).append('\n')
             is Block.Bullet -> sb.append("• ").append(bl.text).append('\n')
             is Block.Numbered -> sb.append(bl.number).append(". ").append(bl.text).append('\n')
-            is Block.Table -> bl.rows.forEach { r ->
-                // Aufgaben-Tabelle als gut lesbare Liste
-                sb.append(r.getOrElse(0) { "" }).append(". ").append(r.getOrElse(1) { "" }).append('\n')
-                sb.append("   Verantwortlich: ").append(r.getOrElse(2) { "" })
-                    .append(" · Frist: ").append(r.getOrElse(3) { "" })
-                if (r.getOrElse(4) { "" }.isNotBlank()) sb.append(" · erledigt ✓")
-                sb.append('\n')
+            is Block.Table -> if (bl.header == TASK_HEADER) {
+                bl.rows.forEach { r ->
+                    // Aufgaben-Tabelle als gut lesbare Liste
+                    sb.append(r.getOrElse(0) { "" }).append(". ").append(r.getOrElse(1) { "" }).append('\n')
+                    sb.append("   Verantwortlich: ").append(r.getOrElse(2) { "" })
+                        .append(" · Frist: ").append(r.getOrElse(3) { "" })
+                    if (r.getOrElse(4) { "" }.isNotBlank()) sb.append(" · erledigt ✓")
+                    sb.append('\n')
+                }
+            } else {
+                // Andere Tabellen: erste Spalte als Listenpunkt, Rest als „Kopf: Wert“
+                bl.rows.forEach { r ->
+                    sb.append("• ").append(r.getOrElse(0) { "" })
+                    for (i in 1 until bl.header.size) {
+                        val v = r.getOrElse(i) { "" }
+                        if (v.isNotBlank()) sb.append(" · ").append(bl.header[i]).append(": ").append(v)
+                    }
+                    sb.append('\n')
+                }
             }
             is Block.Utterance -> sb.append(bl.speaker).append(" [").append(bl.time).append("]: ")
                 .append(bl.text).append("\n\n")

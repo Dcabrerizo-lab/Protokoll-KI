@@ -64,6 +64,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -74,6 +81,8 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -96,11 +105,14 @@ import de.protokollki.data.Meeting
 import de.protokollki.data.MeetingRepository
 import de.protokollki.data.MeetingStatus
 import de.protokollki.data.ProtocolMode
+import de.protokollki.data.TaskItem
+import de.protokollki.data.TaskTracker
 import de.protokollki.engine.ModelManager
 import de.protokollki.service.ProcessingService
 import de.protokollki.ui.components.EmptyState
 import de.protokollki.ui.components.MetaItem
 import de.protokollki.ui.components.OfflineBadge
+import de.protokollki.ui.components.ReadAloudBar
 import de.protokollki.ui.components.SpeakerAvatarStack
 import de.protokollki.ui.components.StatusChip
 import de.protokollki.ui.components.dayKey
@@ -114,6 +126,7 @@ import de.protokollki.ui.openAppSettings
 import de.protokollki.ui.theme.RecordGradientEnd
 import de.protokollki.ui.theme.RecordGradientStart
 import de.protokollki.ui.theme.RecordRed
+import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
@@ -121,6 +134,7 @@ fun HomeScreen(
     onStartRecording: () -> Unit,
     onOpenSettings: () -> Unit,
     onImport: (Uri) -> Unit,
+    onOpenTask: (String) -> Unit = onOpenMeeting,
 ) {
     val context = LocalContext.current
     val meetings by MeetingRepository.meetings.collectAsStateWithLifecycle()
@@ -130,6 +144,32 @@ fun HomeScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<Meeting?>(null) }
     var micDenied by remember { mutableStateOf(false) }
+    var tab by rememberSaveable { mutableIntStateOf(0) }   // 0 = Besprechungen, 1 = Aufgaben
+    var showDone by rememberSaveable { mutableStateOf(false) }
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
+    val openTasks = remember(meetings) {
+        runCatching { TaskTracker.openTasks() }.getOrDefault(emptyList())
+    }
+    val doneTasks = remember(meetings) {
+        meetings.flatMap { m -> m.tasks.filter { it.done }.map { m to it } }.take(200)
+    }
+    val toggleTask: (Meeting, TaskItem) -> Unit = { m, t ->
+        val nowDone = !t.done
+        TaskTracker.setDone(m.id, t.id, nowDone)
+        if (nowDone) {
+            scope.launch {
+                snackbar.currentSnackbarData?.dismiss()
+                val r = snackbar.showSnackbar(
+                    message = "Erledigt: ${t.text.take(40)}",
+                    actionLabel = "Rückgängig",
+                    duration = SnackbarDuration.Short,
+                )
+                if (r == SnackbarResult.ActionPerformed) TaskTracker.setDone(m.id, t.id, false)
+            }
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -169,16 +209,27 @@ fun HomeScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            HomeTopBar(count = meetings.size, onOpenSettings = onOpenSettings)
+            HomeTopBar(
+                count = meetings.size,
+                openTaskCount = openTasks.size,
+                tab = tab,
+                onTab = { tab = it },
+                showTabs = meetings.isNotEmpty(),
+                onOpenSettings = onOpenSettings,
+            )
         },
         bottomBar = {
-            BottomDock(
-                recordingActive = rec.active,
-                onRecord = startRecording,
-                onImport = startImport,
-                onSettings = onOpenSettings,
-            )
+            Column {
+                ReadAloudBar()
+                BottomDock(
+                    recordingActive = rec.active,
+                    onRecord = startRecording,
+                    onImport = startImport,
+                    onSettings = onOpenSettings,
+                )
+            }
         },
     ) { padding ->
         LazyColumn(
@@ -191,7 +242,7 @@ fun HomeScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (meetings.isNotEmpty()) {
+            if (meetings.isNotEmpty() && tab == 0) {
                 item(key = "search") {
                     SearchField(query = query, onChange = { query = it })
                 }
@@ -205,7 +256,7 @@ fun HomeScreen(
                     )
                 }
             }
-            if (!ms.installed) {
+            if (!ms.installed && tab == 0) {
                 item(key = "modelBanner") {
                     ModelBanner(
                         downloading = ms.downloading,
@@ -216,7 +267,16 @@ fun HomeScreen(
                 }
             }
 
-            if (meetings.isEmpty()) {
+            if (tab == 1 && meetings.isNotEmpty()) {
+                allTasksItems(
+                    open = openTasks,
+                    done = doneTasks,
+                    showDone = showDone,
+                    onShowDoneChange = { showDone = it },
+                    onToggle = toggleTask,
+                    onOpen = { m -> onOpenTask(m.id) },
+                )
+            } else if (meetings.isEmpty()) {
                 item(key = "empty") {
                     EmptyState(
                         icon = Icons.Filled.Mic,
@@ -324,12 +384,25 @@ fun HomeScreen(
 
 // ---------------------------------------------------------------- Kopfzeile & Suche
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeTopBar(count: Int, onOpenSettings: () -> Unit) {
+private fun HomeTopBar(
+    count: Int,
+    openTaskCount: Int,
+    tab: Int,
+    onTab: (Int) -> Unit,
+    showTabs: Boolean,
+    onOpenSettings: () -> Unit,
+) {
+  Column(
+      modifier = Modifier
+          .fillMaxWidth()
+          .background(MaterialTheme.colorScheme.background)
+          .statusBarsPadding(),
+  ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .statusBarsPadding()
             .padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -354,6 +427,33 @@ private fun HomeTopBar(count: Int, onOpenSettings: () -> Unit) {
             Icon(Icons.Filled.Settings, contentDescription = "Einstellungen")
         }
     }
+    if (showTabs) {
+        SingleChoiceSegmentedButtonRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+        ) {
+            SegmentedButton(
+                selected = tab == 0,
+                onClick = { onTab(0) },
+                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                icon = {
+                    Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(18.dp))
+                },
+            ) { Text("Besprechungen", maxLines = 1) }
+            SegmentedButton(
+                selected = tab == 1,
+                onClick = { onTab(1) },
+                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                icon = {
+                    Icon(Icons.Filled.TaskAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                },
+            ) {
+                Text(if (openTaskCount > 0) "Aufgaben · $openTaskCount" else "Aufgaben", maxLines = 1)
+            }
+        }
+    }
+  }
 }
 
 @Composable

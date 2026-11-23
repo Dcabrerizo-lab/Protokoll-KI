@@ -13,6 +13,7 @@ class ProtokollApp : Application() {
         AppSettings.init(this)
         MeetingRepository.init(this)
         ModelManager.init(this)
+        de.protokollki.engine.VoiceProfiles.init(this)
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_RECORDING, "Aufnahme", NotificationManager.IMPORTANCE_LOW)

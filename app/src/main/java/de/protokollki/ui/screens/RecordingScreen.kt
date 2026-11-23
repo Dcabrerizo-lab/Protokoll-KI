@@ -29,7 +29,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
@@ -66,6 +68,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -106,6 +109,9 @@ fun RecordingScreen(
     var confirmDiscard by remember { mutableStateOf(false) }
     var leaving by remember { mutableStateOf(false) }
     var sawActive by remember { mutableStateOf(false) }
+    var showAgenda by remember { mutableStateOf(false) }
+    val meetings by MeetingRepository.meetings.collectAsStateWithLifecycle()
+    val agenda = meetings.firstOrNull { it.id == (rec.meetingId ?: meetingId) }?.agenda.orEmpty()
 
     fun startRecording() {
         try {
@@ -270,7 +276,13 @@ fun RecordingScreen(
                             .height(150.dp)
                             .padding(horizontal = 24.dp),
                     )
-                    Spacer(Modifier.height(32.dp))
+                    Spacer(Modifier.height(28.dp))
+                    AgendaPill(
+                        agenda = agenda,
+                        enabled = (rec.meetingId ?: meetingId) != null,
+                        onClick = { showAgenda = true },
+                    )
+                    Spacer(Modifier.height(20.dp))
                     Text(
                         "Tipp: Legen Sie das Smartphone mittig zwischen die Teilnehmenden.",
                         style = MaterialTheme.typography.bodyMedium,
@@ -306,6 +318,11 @@ fun RecordingScreen(
                 }
             }
         }
+    }
+
+    val agendaMeetingId = rec.meetingId ?: meetingId
+    if (showAgenda && agendaMeetingId != null) {
+        AgendaSheet(meetingId = agendaMeetingId, onDismiss = { showAgenda = false })
     }
 
     if (confirmDiscard) {
@@ -493,5 +510,57 @@ private fun PermissionOrErrorView(
             }
         }
         TextButton(onClick = onBack) { Text("Zurück", color = Color.White.copy(alpha = 0.8f)) }
+    }
+}
+
+/** Tagesordnung während der Aufnahme: Knopf + kompakte Liste der TOPs. */
+@Composable
+private fun AgendaPill(agenda: List<String>, enabled: Boolean, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(Color.White.copy(alpha = 0.10f))
+                .clickable(enabled = enabled, onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                if (agenda.isEmpty()) Icons.Filled.Add else Icons.Filled.FormatListNumbered,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                when (agenda.size) {
+                    0 -> "Tagesordnung hinzufügen"
+                    1 -> "Tagesordnung · 1 TOP"
+                    else -> "Tagesordnung · ${agenda.size} TOPs"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White,
+            )
+        }
+        if (agenda.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            agenda.take(3).forEachIndexed { i, top ->
+                Text(
+                    "${i + 1}. $top",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.65f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 48.dp, vertical = 1.dp),
+                )
+            }
+            if (agenda.size > 3) {
+                Text(
+                    "… und ${agenda.size - 3} weitere",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.5f),
+                )
+            }
+        }
     }
 }

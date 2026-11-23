@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -21,7 +22,9 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.MergeType
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -40,6 +43,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -52,11 +57,16 @@ import de.protokollki.ui.components.speakersOf
 
 /** Vollständige Sprecherliste (fehlende IDs aus den Segmenten mit Standardnamen ergänzt). */
 fun completeSpeakers(m: Meeting): List<Speaker> =
-    speakersOf(m).map { (id, name) -> Speaker(id, name) }
+    speakersOf(m).map { (id, name) ->
+        Speaker(id, name, m.speakers.firstOrNull { it.id == id }?.profileId)
+    }
 
 fun renameSpeaker(m: Meeting, id: Int, name: String): Meeting {
     val list = completeSpeakers(m)
-    val updated = if (list.any { it.id == id }) list.map { if (it.id == id) it.copy(name = name) else it }
+    // Neuer Name = die automatische Erkennung lag daneben -> Verknüpfung zum Stimmprofil lösen
+    val updated = if (list.any { it.id == id }) list.map {
+        if (it.id == id) it.copy(name = name, profileId = if (it.name == name) it.profileId else null) else it
+    }
     else list + Speaker(id, name)
     return m.copy(speakers = updated)
 }
@@ -121,12 +131,16 @@ fun SpeakerDialog(
     meeting: Meeting,
     speakerId: Int,
     onDismiss: () -> Unit,
-    onRename: (String) -> Unit,
+    onRename: (name: String, rememberVoice: Boolean) -> Unit,
     onMerge: (intoId: Int) -> Unit,
+    canRememberVoice: Boolean = false,
 ) {
     val current = meeting.speakerName(speakerId)
+    val hasProfile = meeting.speakers.firstOrNull { it.id == speakerId }?.profileId != null
     var name by remember { mutableStateOf(if (current.startsWith("Person ")) "" else current) }
     var mergeInto by remember { mutableStateOf<Int?>(null) }
+    // Standard: Stimme merken (schnellster Weg zu automatisch erkannten Teilnehmenden)
+    var rememberVoice by remember { mutableStateOf(canRememberVoice && !hasProfile) }
     val others = remember(meeting) { speakersOf(meeting).filter { it.first != speakerId } }
 
     AlertDialog(
@@ -147,6 +161,56 @@ fun SpeakerDialog(
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (hasProfile) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.Verified, contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "Automatisch an der Stimme erkannt",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (canRememberVoice) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .toggleable(
+                                value = rememberVoice && mergeInto == null,
+                                enabled = mergeInto == null,
+                                role = Role.Checkbox,
+                                onValueChange = { rememberVoice = it },
+                            )
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = rememberVoice && mergeInto == null,
+                            onCheckedChange = null,
+                            enabled = mergeInto == null,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Stimme für künftige Besprechungen merken",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                "Die Person wird dann automatisch mit Namen erkannt.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
                 if (others.isNotEmpty()) {
                     Spacer(Modifier.height(20.dp))
                     HorizontalDivider()
@@ -184,7 +248,8 @@ fun SpeakerDialog(
             val target = mergeInto
             TextButton(
                 onClick = {
-                    if (target != null) onMerge(target) else onRename(name.trim())
+                    if (target != null) onMerge(target)
+                    else onRename(name.trim(), canRememberVoice && rememberVoice)
                 },
                 enabled = target != null || name.isNotBlank(),
             ) { Text(if (target != null) "Zusammenführen" else "Speichern") }

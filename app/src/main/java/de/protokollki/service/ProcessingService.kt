@@ -139,7 +139,15 @@ class ProcessingService : LifecycleService() {
         if (cancelled.get()) return
         val chunks = transcriber.planChunks(turns, samples)
         val speakerCount = (chunks.maxOfOrNull { it.speaker } ?: 0) + 1
-        val speakers = (0 until speakerCount).map { Speaker(it, "Person ${it + 1}") }
+        // Bekannte Stimmen erkennen (Stimmprofile)
+        progress(id, MeetingStatus.TRANSCRIBING, 0.2f, "Erkenne bekannte Stimmen …")
+        val known = runCatching {
+            de.protokollki.engine.VoiceProfiles.identify(applicationContext, id, samples, chunks)
+        }.getOrDefault(emptyMap())
+        val speakers = (0 until speakerCount).map {
+            val p = known[it]
+            if (p != null) Speaker(it, p.name, p.id) else Speaker(it, "Person ${it + 1}")
+        }
         MeetingRepository.update(id) { it.copy(speakers = speakers, segments = emptyList()) }
 
         val segments = transcriber.transcribe(samples, chunks) { done, total, partial ->
@@ -170,15 +178,34 @@ class ProcessingService : LifecycleService() {
         currentLlm = llm
         try {
             val gen = ProtocolGenerator(LocalLlmModel(llm))
+            val candidates = if (AppSettings.state.value.trackTasks)
+                de.protokollki.data.TaskTracker.candidatesFor(meeting) else emptyList()
+            val openTasks = candidates.mapIndexed { i, (m, t) ->
+                ProtocolGenerator.OpenTask("A${i + 1}", t.id, m.id, t.text, t.owner)
+            }
             val result = gen.generate(
                 title = meeting.title,
                 dateMillis = meeting.createdAt,
                 segments = meeting.segments,
                 speakers = meeting.speakers,
                 wantSummary = meeting.mode == ProtocolMode.ERGEBNIS,
+                agenda = meeting.agenda,
+                openTasks = openTasks,
             ) { f, text ->
                 progress(id, MeetingStatus.SUMMARIZING, f, text)
                 !cancelled.get()
+            }
+            // Erledigte Aufgaben in den Ursprungs-Besprechungen abhaken
+            val dateText = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.GERMAN)
+                .format(java.util.Date(meeting.createdAt))
+            val doneIds = result.completed.map { it.taskId }.toSet()
+            result.completed.forEach {
+                de.protokollki.data.TaskTracker.setDone(it.meetingId, it.taskId, true,
+                    "Erledigt laut Besprechung „${meeting.title}“ vom $dateText")
+            }
+            val followUps = openTasks.map {
+                de.protokollki.data.FollowUp(it.taskId, it.meetingId, it.text, it.owner,
+                    done = it.taskId in doneIds, ref = result.completedRefs[it.taskId] ?: -1)
             }
             MeetingRepository.update(id) {
                 // Erledigt-Häkchen bei gleichem Aufgabentext beibehalten
@@ -186,6 +213,9 @@ class ProcessingService : LifecycleService() {
                 it.copy(
                     summary = if (meeting.mode == ProtocolMode.ERGEBNIS) result.summary else it.summary,
                     tasks = result.tasks.map { t -> if (t.text in doneTexts) t.copy(done = true) else t },
+                    followUps = followUps,
+                    sensitiveTerms = (it.sensitiveTerms + result.sensitiveTerms)
+                        .distinctBy { t -> t.lowercase() },
                 )
             }
         } finally {

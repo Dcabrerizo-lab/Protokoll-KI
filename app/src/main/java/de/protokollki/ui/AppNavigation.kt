@@ -52,6 +52,7 @@ import de.protokollki.ui.screens.MeetingScreen
 import de.protokollki.ui.screens.OnboardingScreen
 import de.protokollki.ui.screens.RecordingScreen
 import de.protokollki.ui.screens.SettingsScreen
+import de.protokollki.ui.screens.VoiceProfilesScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -62,8 +63,11 @@ object Routes {
     const val HOME = "home"
     const val RECORDING = "recording"
     const val SETTINGS = "settings"
-    const val MEETING = "meeting/{id}"
-    fun meeting(id: String) = "meeting/$id"
+    const val VOICES = "voices"
+    const val MEETING = "meeting/{id}?tab={tab}"
+    /** [tab]: optional „tasks“, „transcript“ oder „summary“ – öffnet direkt diesen Reiter. */
+    fun meeting(id: String, tab: String? = null) =
+        if (tab == null) "meeting/$id" else "meeting/$id?tab=$tab"
 }
 
 fun hasPermission(context: Context, permission: String): Boolean =
@@ -146,6 +150,7 @@ fun AppNavigation(
         composable(Routes.HOME) {
             HomeScreen(
                 onOpenMeeting = { id -> nav.navigate(Routes.meeting(id)) { launchSingleTop = true } },
+                onOpenTask = { id -> nav.navigate(Routes.meeting(id, "tasks")) { launchSingleTop = true } },
                 onStartRecording = { nav.navigate(Routes.RECORDING) { launchSingleTop = true } },
                 onOpenSettings = { nav.navigate(Routes.SETTINGS) { launchSingleTop = true } },
                 onImport = importFile,
@@ -164,18 +169,35 @@ fun AppNavigation(
         }
         composable(
             route = Routes.MEETING,
-            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            arguments = listOf(
+                navArgument("id") { type = NavType.StringType },
+                navArgument("tab") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
         ) { entry ->
             val id = entry.arguments?.getString("id").orEmpty()
+            val tab = entry.arguments?.getString("tab")
             MeetingScreen(
                 meetingId = id,
+                initialTab = tab,
                 onBack = { nav.popBackStack() },
+                // Sprung zu einer anderen (früheren) Besprechung: Zurück führt hierher zurück
+                onOpenMeeting = { other -> if (other != id) nav.navigate(Routes.meeting(other, "tasks")) },
                 onOpenRecording = { nav.navigate(Routes.RECORDING) { launchSingleTop = true } },
                 onOpenSettings = { nav.navigate(Routes.SETTINGS) { launchSingleTop = true } },
             )
         }
         composable(Routes.SETTINGS) {
-            SettingsScreen(onBack = { nav.popBackStack() })
+            SettingsScreen(
+                onBack = { nav.popBackStack() },
+                onOpenVoices = { nav.navigate(Routes.VOICES) { launchSingleTop = true } },
+            )
+        }
+        composable(Routes.VOICES) {
+            VoiceProfilesScreen(onBack = { nav.popBackStack() })
         }
     }
 

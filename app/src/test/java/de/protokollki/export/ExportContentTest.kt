@@ -1,5 +1,6 @@
 package de.protokollki.export
 
+import de.protokollki.data.FollowUp
 import de.protokollki.data.Meeting
 import de.protokollki.data.ProtocolMode
 import de.protokollki.data.Segment
@@ -8,6 +9,7 @@ import de.protokollki.data.Summary
 import de.protokollki.data.TaskItem
 import de.protokollki.data.Topic
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -99,5 +101,62 @@ class ExportContentTest {
         val doc = DocxWriter.document(buildBlocks(meeting(ProtocolMode.ERGEBNIS), utc))
         assertTrue(doc.contains("Team &lt;Jour&gt; &amp; Fixe"))
         assertTrue(doc.contains("<w:tbl>"))
+    }
+
+    private fun withAgendaAndFollowUps(mode: ProtocolMode) = meeting(mode).copy(
+        agenda = listOf("Begrüßung", " ", "Budget 2027"),
+        followUps = listOf(
+            FollowUp("t1", "m0", "Angebote einholen", "Becker", done = true),
+            FollowUp("t2", "m0", "Raum klären", "", done = false),
+            FollowUp("t3", "m0", " ", "X", done = false),
+        ),
+    )
+
+    @Test
+    fun agendaComesFirstAndFollowUpsAfterTasks() {
+        for (mode in ProtocolMode.values()) {
+            val blocks = buildBlocks(withAgendaAndFollowUps(mode), utc)
+            val headings = blocks.filterIsInstance<Block.Heading>().map { it.text }
+            assertEquals(AGENDA_HEADING, headings.first())
+            assertEquals(headings.indexOf("Aufgaben") + 1, headings.indexOf(FOLLOWUP_HEADING))
+            // leere Einträge fallen weg, Nummerierung lückenlos
+            val agenda = blocks.dropWhile { it != Block.Heading(AGENDA_HEADING) }.drop(1)
+                .takeWhile { it is Block.Numbered }.map { it as Block.Numbered }
+            assertEquals(listOf(1 to "Begrüßung", 2 to "Budget 2027"), agenda.map { it.number to it.text })
+            val table = blocks.dropWhile { it != Block.Heading(FOLLOWUP_HEADING) }[1] as Block.Table
+            assertEquals(FOLLOWUP_HEADER, table.header)
+            assertEquals(
+                listOf(listOf("Angebote einholen", "Becker", "erledigt"), listOf("Raum klären", "offen", "offen")),
+                table.rows,
+            )
+        }
+    }
+
+    @Test
+    fun agendaAndFollowUpsInAllFormats() {
+        val m = withAgendaAndFollowUps(ProtocolMode.ERGEBNIS)
+        val txt = renderPlainText(buildBlocks(m, utc))
+        assertTrue(txt.contains("TAGESORDNUNG\n------------\n1. Begrüßung\n2. Budget 2027"))
+        assertTrue(txt.contains("• Angebote einholen · Verantwortlich: Becker · Stand: erledigt"))
+        assertTrue(txt.contains("• Raum klären · Verantwortlich: offen · Stand: offen"))
+        // Aufgaben-Tabelle behält ihr eigenes Format
+        assertTrue(txt.contains("1. Bericht | schreiben\n   Verantwortlich: Anna · Frist: Freitag · erledigt ✓"))
+
+        val md = renderMarkdown(buildBlocks(m, utc))
+        assertTrue(md.contains("## Tagesordnung\n\n1. Begrüßung\n2. Budget 2027\n"))
+        assertTrue(md.contains("## $FOLLOWUP_HEADING\n\n| Aufgabe | Verantwortlich | Stand |"))
+        assertTrue(md.contains("| Angebote einholen | Becker | erledigt |"))
+
+        val doc = DocxWriter.document(buildBlocks(m, utc))
+        assertTrue(doc.contains("Tagesordnung"))
+        assertTrue(doc.contains(FOLLOWUP_HEADING))
+        assertEquals(2, Regex("<w:tbl>").findAll(doc).count())
+    }
+
+    @Test
+    fun noAgendaOrFollowUpSectionsWhenEmpty() {
+        val txt = renderPlainText(buildBlocks(meeting(ProtocolMode.ERGEBNIS), utc))
+        assertFalse(txt.contains("TAGESORDNUNG"))
+        assertFalse(txt.contains(FOLLOWUP_HEADING.uppercase()))
     }
 }

@@ -12,6 +12,12 @@ data class SettingsState(
     val language: String = "de",
     val modelSetId: String? = null,          // null = automatisch nach Gerät
     val onboardingDone: Boolean = false,
+    // Datenschutz
+    val appLock: Boolean = false,            // Sperre per Fingerabdruck/Geräte-PIN
+    val blockScreenshots: Boolean = false,   // FLAG_SECURE: keine Screenshots, verdeckt in "Zuletzt"
+    val audioRetentionDays: Int = 0,         // 0 = Audio behalten, sonst nach X Tagen löschen
+    val customTerms: List<String> = emptyList(), // eigene Begriffe, die immer geschwärzt werden
+    val trackTasks: Boolean = true,          // offene Aufgaben in Folgebesprechungen abgleichen
 )
 
 object AppSettings {
@@ -29,6 +35,12 @@ object AppSettings {
             language = prefs.getString("language", "de") ?: "de",
             modelSetId = prefs.getString("modelSetId", null),
             onboardingDone = prefs.getBoolean("onboardingDone", false),
+            appLock = prefs.getBoolean("appLock", false),
+            blockScreenshots = prefs.getBoolean("blockScreenshots", false),
+            audioRetentionDays = prefs.getInt("audioRetentionDays", 0),
+            customTerms = (prefs.getString("customTerms", "") ?: "").split("\n")
+                .map { it.trim() }.filter { it.isNotEmpty() },
+            trackTasks = prefs.getBoolean("trackTasks", true),
         )
     }
 
@@ -41,6 +53,11 @@ object AppSettings {
             .putString("language", s.language)
             .putString("modelSetId", s.modelSetId)
             .putBoolean("onboardingDone", s.onboardingDone)
+            .putBoolean("appLock", s.appLock)
+            .putBoolean("blockScreenshots", s.blockScreenshots)
+            .putInt("audioRetentionDays", s.audioRetentionDays)
+            .putString("customTerms", s.customTerms.joinToString("\n"))
+            .putBoolean("trackTasks", s.trackTasks)
             .apply()
     }
 }

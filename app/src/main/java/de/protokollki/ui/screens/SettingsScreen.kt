@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,7 +25,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Memory
@@ -66,6 +69,7 @@ import de.protokollki.data.AppSettings
 import de.protokollki.data.ProtocolMode
 import de.protokollki.engine.ModelCatalog
 import de.protokollki.engine.ModelManager
+import de.protokollki.engine.VoiceProfiles
 import de.protokollki.service.DownloadService
 import de.protokollki.ui.components.ModelDownloadPanel
 import de.protokollki.ui.components.ModelSetCard
@@ -76,9 +80,10 @@ import de.protokollki.ui.hasPermission
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onOpenVoices: () -> Unit = {}) {
     val context = LocalContext.current
     val settings by AppSettings.state.collectAsStateWithLifecycle()
+    val voiceProfiles by VoiceProfiles.profiles.collectAsStateWithLifecycle()
     val ms by remember { ModelManager.state }.collectAsStateWithLifecycle()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
@@ -183,6 +188,69 @@ fun SettingsScreen(onBack: () -> Unit) {
                             onCheckedChange = { v -> AppSettings.update { it.copy(autoProcess = v) } },
                         )
                     }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Aufgaben nachverfolgen", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "Offene Aufgaben früherer Besprechungen in der nächsten Besprechung automatisch abgleichen.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Switch(
+                            checked = settings.trackTasks,
+                            onCheckedChange = { v -> AppSettings.update { it.copy(trackTasks = v) } },
+                        )
+                    }
+                }
+            }
+
+            // ------------------------------------------------ Stimmprofile
+            item(key = "voices") {
+                SettingsGroup("Teilnehmende erkennen") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onOpenVoices)
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Filled.RecordVoiceOver, contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Stimmprofile", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                when (voiceProfiles.size) {
+                                    0 -> "Bekannte Stimmen automatisch mit Namen erkennen"
+                                    1 -> "1 Stimme gespeichert"
+                                    else -> "${voiceProfiles.size} Stimmen gespeichert"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Icon(
+                            Icons.Filled.ChevronRight, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
 
@@ -249,9 +317,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            // ------------------------------------------------ Datenschutz
+            // ------------------------------------------------ Datenschutz & Sicherheit
+            item(key = "security") { PrivacySecurityGroup() }
+
             item(key = "privacy") {
-                SettingsGroup("Datenschutz") {
+                SettingsGroup("So schützt Protokoll KI Ihre Daten") {
                     Column(Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
@@ -321,7 +391,7 @@ fun SettingsScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun SettingsGroup(
+internal fun SettingsGroup(
     title: String,
     plain: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,

@@ -28,16 +28,26 @@ class LocalLlmModel(private val llm: LocalLlm) : TextModel {
 }
 
 /**
- * Erzeugt Ergebnisprotokoll und Aufgabenliste aus dem Transkript.
- * Lange Besprechungen werden abschnittsweise verdichtet (Map-Reduce).
- * Die Ausgaben sind per Grammatik auf gültiges JSON beschränkt.
+ * Erzeugt Ergebnisprotokoll, Aufgaben, Quellenbelege, Aufgaben-Abgleich und
+ * sensible Begriffe aus dem Transkript. Lange Besprechungen werden abschnittsweise
+ * verdichtet (Map-Reduce). Ausgaben sind per Grammatik auf gültiges JSON beschränkt.
  */
 class ProtocolGenerator(private val model: TextModel) {
 
     /** progress(fraction 0..1, text) -> false = abbrechen */
     fun interface Progress { fun update(fraction: Float, text: String): Boolean }
 
-    data class Result(val summary: Summary, val tasks: List<TaskItem>)
+    /** Offene Aufgabe aus einer früheren Besprechung, die abgeglichen werden soll. */
+    data class OpenTask(val key: String, val taskId: String, val meetingId: String,
+                        val text: String, val owner: String)
+
+    data class Result(
+        val summary: Summary,
+        val tasks: List<TaskItem>,
+        val completed: List<OpenTask> = emptyList(),   // laut Gespräch erledigt
+        val completedRefs: Map<String, Int> = emptyMap(),
+        val sensitiveTerms: List<String> = emptyList(),
+    )
 
     fun generate(
         title: String,
@@ -45,66 +55,81 @@ class ProtocolGenerator(private val model: TextModel) {
         segments: List<Segment>,
         speakers: List<Speaker>,
         wantSummary: Boolean,
+        agenda: List<String> = emptyList(),
+        openTasks: List<OpenTask> = emptyList(),
         progress: Progress,
     ): Result {
         val names = speakers.associate { it.id to it.name }
-        val lines = segments.map { "${names[it.speakerId] ?: "Person ${it.speakerId + 1}"}: ${it.text}" }
-        val participants = segments.map { names[it.speakerId] ?: "Person ${it.speakerId + 1}" }.distinct()
+        fun nameOf(id: Int) = names[id] ?: "Person ${id + 1}"
+        val lines = segments.mapIndexed { i, s -> "[$i] ${nameOf(s.speakerId)}: ${s.text}" }
+        val participants = segments.map { nameOf(it.speakerId) }.distinct()
         val date = SimpleDateFormat("EEEE, dd.MM.yyyy", Locale.GERMAN).format(Date(dateMillis))
-        val header = "Besprechung: $title\nDatum: $date\nTeilnehmende: ${participants.joinToString(", ")}"
+        val header = buildString {
+            append("Besprechung: $title\nDatum: $date\nTeilnehmende: ${participants.joinToString(", ")}")
+            if (agenda.isNotEmpty()) {
+                append("\nTagesordnung:\n")
+                agenda.forEachIndexed { i, t -> append("TOP ${i + 1}: $t\n") }
+            }
+            if (openTasks.isNotEmpty()) {
+                append("\nOffene Aufgaben aus früheren Besprechungen:\n")
+                openTasks.forEach { append("${it.key}: ${it.text} (${it.owner})\n") }
+            }
+        }.trimEnd()
 
         // Platz für Systemprompt, Anweisungen und Antwort freihalten
-        val budget = (model.contextSize - 2800).coerceAtLeast(1500)
+        val reserve = 3000 + model.countTokens(header)
+        val budget = (model.contextSize - reserve).coerceAtLeast(1500)
         val chunks = chunk(lines, budget)
 
-        val material: String
-        val tasks = mutableListOf<TaskItem>()
-        val steps = (if (chunks.size > 1) chunks.size else 0) +
+        val steps = (if (chunks.size > 1 && wantSummary) chunks.size else 0) +
             (if (wantSummary) 1 else chunks.size)
         var step = 0
         fun prog(text: String, inner: Float = 0f): Boolean =
             progress.update(((step + inner) / steps).coerceIn(0f, 1f), text)
 
-        if (chunks.size == 1 || !wantSummary) {
-            material = "Transkript:\n" + chunks[0]
-        } else {
-            val notes = chunks.mapIndexed { i, c ->
-                val label = "Fasse Abschnitt ${i + 1} von ${chunks.size} zusammen …"
-                if (!prog(label)) throw LlmException("Abgebrochen")
-                val n = model.complete(SYSTEM, NOTES_PROMPT.format(header, i + 1, chunks.size, c),
-                    900, 0.2f, null, llmProgress { prog(label, it) })
-                step++
-                "Notizen zu Teil ${i + 1}:\n$n"
-            }
-            material = notes.joinToString("\n\n")
-        }
-
-        var summary = Summary()
-        val meetingDate = java.time.Instant.ofEpochMilli(dateMillis)
-            .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val extras = extraRules(agenda.isNotEmpty(), openTasks.isNotEmpty())
+        val raws = mutableListOf<String>()
         if (wantSummary) {
+            val material = if (chunks.size == 1) "Transkript:\n" + chunks[0] else {
+                chunks.mapIndexed { i, c ->
+                    val label = "Fasse Abschnitt ${i + 1} von ${chunks.size} zusammen …"
+                    if (!prog(label)) throw LlmException("Abgebrochen")
+                    val n = model.complete(SYSTEM, NOTES_PROMPT.format(header, i + 1, chunks.size, c),
+                        1000, 0.2f, null, llmProgress { prog(label, it) })
+                    step++
+                    "Notizen zu Teil ${i + 1}:\n$n"
+                }.joinToString("\n\n")
+            }
             // Ein Durchgang für Protokoll UND Aufgaben (halbiert die Rechenzeit)
             val label = "Schreibe Protokoll und Aufgaben …"
             if (!prog(label)) throw LlmException("Abgebrochen")
-            val raw = model.complete(SYSTEM, SUMMARY_PROMPT.format(header, material),
-                2200, 0.2f, SUMMARY_GRAMMAR, llmProgress { prog(label, it) })
-            summary = parseSummary(raw)
-            tasks += parseTasks(raw, participants)
+            raws += model.complete(SYSTEM, SUMMARY_PROMPT.format(header, extras, material),
+                2600, 0.2f, SUMMARY_GRAMMAR, llmProgress { prog(label, it) })
             step++
         } else {
             for ((i, c) in chunks.withIndex()) {
                 val label = if (chunks.size > 1) "Ermittle Aufgaben (${i + 1}/${chunks.size}) …"
                 else "Ermittle Aufgaben …"
                 if (!prog(label)) throw LlmException("Abgebrochen")
-                val raw = model.complete(SYSTEM, TASKS_PROMPT.format(header, c),
-                    1200, 0.0f, TASKS_GRAMMAR, llmProgress { prog(label, it) })
-                tasks += parseTasks(raw, participants)
+                raws += model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c),
+                    1400, 0.0f, TASKS_GRAMMAR, llmProgress { prog(label, it) })
                 step++
             }
         }
-        val resolved = tasks.map { it.copy(due = DateResolver.resolve(it.due, meetingDate)) }
+
+        val meetingDate = java.time.Instant.ofEpochMilli(dateMillis)
+            .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val n = segments.size
+        val summary = if (wantSummary) parseSummary(raws.first(), n) else Summary()
+        val tasks = raws.flatMap { parseTasks(it, n) }
+            .map { it.copy(due = DateResolver.resolve(it.due, meetingDate)) }
+        val doneKeys = mutableMapOf<String, Int>()
+        raws.forEach { r -> parseCompleted(r, n).forEach { (k, ref) -> doneKeys.putIfAbsent(k, ref) } }
+        val completed = openTasks.filter { it.key in doneKeys }
+        val sensitive = raws.flatMap { parseSensitive(it, participants) }.distinctBy { it.lowercase() }
         progress.update(1f, "Fertig")
-        return Result(summary, dedupe(resolved))
+        return Result(summary, dedupe(tasks), completed,
+            completed.associate { it.taskId to (doneKeys[it.key] ?: -1) }, sensitive)
     }
 
     private fun llmProgress(onFraction: (Float) -> Boolean) = LlmProgress { phase, done, total ->
@@ -145,55 +170,93 @@ Hier ist Teil %d von %d des Transkripts. Notiere knapp in Stichpunkten:
 - besprochene Themen mit den wesentlichen Aussagen (wer vertritt welche Position),
 - Entscheidungen und Beschlüsse,
 - offene Fragen,
-- vereinbarte Aufgaben (wer, was, bis wann).
-Keine Einleitung.
+- vereinbarte Aufgaben (wer, was, bis wann),
+- Aussagen, dass frühere Aufgaben erledigt sind,
+- Namen von Klienten, Patienten oder Bewohnern sowie Adressen und Diagnosen.
+Behalte hinter jedem Stichpunkt die Zeilennummer aus dem Transkript in eckigen Klammern bei, z. B. [12]. Keine Einleitung.
 
 Transkript:
 %s
 """.trimIndent()
 
+        private const val CITE_RULE = """Quellenangabe: Setze an das Ende JEDES Punkts, Beschlusses, offenen Punkts und jeder Aufgabe die Nummer der Transkriptzeile, die ihn belegt, in eckigen Klammern, z. B. "Ab März wird die Tour Nord geteilt. [8]"."""
+
         private const val TASK_RULES = """Regeln für "aufgaben" (alles, was jemand erledigen soll oder zugesagt hat):
-- "aufgabe": kurz und konkret, mit dem Verb am Ende (z. B. "Drei Angebote für Möbel einholen").
+- "aufgabe": kurz und konkret, mit dem Verb am Ende (z. B. "Drei Angebote für Möbel einholen [3]").
 - "verantwortlich": Name der zuständigen Person, wie er im Gespräch fällt (wird jemand mit "Frau X" oder "Herr Y" angesprochen, diesen Namen verwenden). Sagt jemand "mache ich", ist es die sprechende Person. Unklar: "offen".
 - "frist": die Zeitangabe GENAU so, wie sie im Gespräch genannt wurde (z. B. "Freitag", "Ende Januar", "15. Januar", "nächste Sitzung"). NICHT selbst in ein Datum umrechnen. Keine Angabe: "offen".
-- Nur echte Aufgaben, nichts erfinden."""
+- Nur echte Aufgaben, nichts erfinden.
+Regeln für "sensible_daten": Namen von Klienten, Patienten, Bewohnern oder anderen Personen, über die gesprochen wird (NICHT die Teilnehmenden), sowie Adressen, Telefonnummern, Geburtsdaten und Diagnosen, jeweils genau so geschrieben wie im Transkript. Leere Liste, wenn keine."""
+
+        private const val AGENDA_RULE = """Tagesordnung: Gliedere "themen" nach der Tagesordnung, Titel jeweils "TOP 1: …", "TOP 2: …". Nicht besprochene TOPs trotzdem aufführen mit dem einzigen Punkt "Nicht besprochen.". Zusätzliche Themen danach unter "Sonstiges"."""
+
+        private const val FOLLOWUP_RULE = """Regeln für "erledigte_aufgaben": Kennungen (z. B. "A2 [14]") der offenen Aufgaben aus früheren Besprechungen, von denen im Gespräch gesagt wird, dass sie erledigt sind, jeweils mit der belegenden Zeilennummer. Nur bei klarer Aussage. Leere Liste, wenn keine."""
+
+        internal fun extraRules(hasAgenda: Boolean, hasOpenTasks: Boolean): String = buildString {
+            append(TASK_RULES)
+            if (hasAgenda) append("\n").append(AGENDA_RULE)
+            append("\n").append(if (hasOpenTasks) FOLLOWUP_RULE else "\"erledigte_aufgaben\": immer leere Liste.")
+            append("\n").append(CITE_RULE)
+        }
 
         val SUMMARY_PROMPT = """
 %s
 
 Erstelle aus dem folgenden Material ein professionelles Ergebnisprotokoll als JSON:
-- "zusammenfassung": 3 bis 5 Sätze, worum es ging und was herauskam.
+- "zusammenfassung": 3 bis 5 Sätze, worum es ging und was herauskam (ohne Quellenangabe).
 - "themen": die besprochenen Themen in zeitlicher Reihenfolge. Je Thema ein kurzer "titel" und 2 bis 6 "punkte" mit Ergebnissen, Argumenten und Zahlen (vollständige, knappe Sätze).
 - "beschluesse": Entscheidungen, die die Runde getroffen hat (z. B. "Ab März wird ..."). Reine Aufgabenverteilungen gehören NICHT hierher, sondern zu "aufgaben". Leere Liste, wenn keine.
 - "offene_punkte": ungeklärte Fragen und vertagte Themen. Leere Liste, wenn keine.
-- "aufgaben": siehe Regeln.
+- "aufgaben", "erledigte_aufgaben", "sensible_daten": siehe Regeln.
 
-""".trimIndent() + "\n" + TASK_RULES + "\n\n%s"
+%s
+
+%s
+""".trimIndent()
 
         val TASKS_PROMPT = """
 %s
 
-Extrahiere alle Aufgaben, die in diesem Gespräch vereinbart, zugesagt oder jemandem zugewiesen wurden, als JSON {"aufgaben": [...]}. Keine Aufgaben: {"aufgaben": []}
+Extrahiere alle Aufgaben, die in diesem Gespräch vereinbart, zugesagt oder jemandem zugewiesen wurden, als JSON. Keine Aufgaben: "aufgaben": []
 
-""".trimIndent() + "\n" + TASK_RULES + "\n\nTranskript:\n%s"
+%s
+
+Transkript:
+%s
+""".trimIndent()
 
         private const val JSON_STRING =
             "string ::= \"\\\"\" ( [^\"\\\\\\x7F\\x00-\\x1F] | \"\\\\\" ([\"\\\\/bfnrt] | \"u\" [0-9a-fA-F]{4}) )* \"\\\"\"\n" +
                 "ws ::= [ \\t\\n]{0,20}\n" +
-                "strlist ::= \"[\" ws ( string ws (\",\" ws string ws)* )? \"]\"\n"
+                "strlist ::= \"[\" ws ( string ws (\",\" ws string ws)* )? \"]\"\n" +
+                "tasks ::= \"[\" ws ( task ws (\",\" ws task ws)* )? \"]\"\n" +
+                "task ::= \"{\" ws \"\\\"aufgabe\\\":\" ws string ws \",\" ws \"\\\"verantwortlich\\\":\" ws string ws \",\" ws \"\\\"frist\\\":\" ws string ws \"}\"\n" +
+                "tail ::= \",\" ws \"\\\"erledigte_aufgaben\\\":\" ws strlist ws \",\" ws \"\\\"sensible_daten\\\":\" ws strlist ws\n"
 
         val SUMMARY_GRAMMAR = """
-root ::= "{" ws "\"zusammenfassung\":" ws string ws "," ws "\"themen\":" ws themen ws "," ws "\"beschluesse\":" ws strlist ws "," ws "\"offene_punkte\":" ws strlist ws "," ws "\"aufgaben\":" ws tasks ws "}"
-tasks ::= "[" ws ( task ws ("," ws task ws)* )? "]"
-task ::= "{" ws "\"aufgabe\":" ws string ws "," ws "\"verantwortlich\":" ws string ws "," ws "\"frist\":" ws string ws "}"
+root ::= "{" ws "\"zusammenfassung\":" ws string ws "," ws "\"themen\":" ws themen ws "," ws "\"beschluesse\":" ws strlist ws "," ws "\"offene_punkte\":" ws strlist ws "," ws "\"aufgaben\":" ws tasks ws tail "}"
 themen ::= "[" ws ( thema ws ("," ws thema ws)* )? "]"
 thema ::= "{" ws "\"titel\":" ws string ws "," ws "\"punkte\":" ws strlist ws "}"
 """.trimIndent() + "\n" + JSON_STRING
 
         val TASKS_GRAMMAR = """
-root ::= "{" ws "\"aufgaben\":" ws "[" ws ( task ws ("," ws task ws)* )? "]" ws "}"
-task ::= "{" ws "\"aufgabe\":" ws string ws "," ws "\"verantwortlich\":" ws string ws "," ws "\"frist\":" ws string ws "}"
+root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
 """.trimIndent() + "\n" + JSON_STRING
+
+        // ------------------------------------------------------------ Parsing
+
+        private val REF = Regex("\\s*\\[(\\d{1,5})(?:\\s*[,;–-]\\s*\\d{1,5})*]")
+
+        /** Trennt Quellenangaben "[12]" vom Text. Rückgabe: (Text ohne Angaben, erster gültiger Index). */
+        fun splitRef(raw: String, segmentCount: Int): Pair<String, Int> {
+            var ref = -1
+            REF.findAll(raw).forEach { m ->
+                val idx = m.groupValues[1].toInt()
+                if (ref < 0 && idx in 0 until segmentCount) ref = idx
+            }
+            val text = raw.replace(REF, "").replace(Regex("\\s+([.,;:!?])"), "$1").trim()
+            return text to ref
+        }
 
         private fun JSONArray?.strings(): List<String> =
             if (this == null) emptyList()
@@ -205,31 +268,57 @@ task ::= "{" ws "\"aufgabe\":" ws string ws "," ws "\"verantwortlich\":" ws stri
             return JSONObject(raw.substring(s, e + 1))
         }
 
-        fun parseSummary(raw: String): Summary {
+        fun parseSummary(raw: String, segmentCount: Int = Int.MAX_VALUE): Summary {
             val o = jsonObject(raw)
             val themen = o.optJSONArray("themen") ?: JSONArray()
+            fun split(list: List<String>) = list.map { splitRef(it, segmentCount) }
+            val decisions = split(o.optJSONArray("beschluesse").strings())
+            val open = split(o.optJSONArray("offene_punkte").strings())
             return Summary(
-                overview = o.optString("zusammenfassung").trim(),
+                overview = splitRef(o.optString("zusammenfassung"), 0).first,
                 topics = (0 until themen.length()).mapNotNull {
                     val t = themen.optJSONObject(it) ?: return@mapNotNull null
-                    Topic(t.optString("titel").trim(), t.optJSONArray("punkte").strings())
+                    val pts = split(t.optJSONArray("punkte").strings())
+                    Topic(splitRef(t.optString("titel"), 0).first, pts.map { p -> p.first },
+                        pts.map { p -> p.second })
                 }.filter { it.title.isNotEmpty() },
-                decisions = o.optJSONArray("beschluesse").strings(),
-                openPoints = o.optJSONArray("offene_punkte").strings(),
+                decisions = decisions.map { it.first },
+                openPoints = open.map { it.first },
+                decisionRefs = decisions.map { it.second },
+                openPointRefs = open.map { it.second },
             )
         }
 
-        fun parseTasks(raw: String, participants: List<String> = emptyList()): List<TaskItem> {
+        fun parseTasks(raw: String, segmentCount: Int = Int.MAX_VALUE): List<TaskItem> {
             val arr = jsonObject(raw).optJSONArray("aufgaben") ?: return emptyList()
             return (0 until arr.length()).mapNotNull {
                 val t = arr.optJSONObject(it) ?: return@mapNotNull null
-                val text = t.optString("aufgabe").trim()
+                val (text, ref) = splitRef(t.optString("aufgabe"), segmentCount)
                 if (text.isEmpty()) return@mapNotNull null
-                fun norm(v: String) = v.trim().ifEmpty { "offen" }.let {
-                    if (it.equals("unbekannt", true) || it == "-" || it.equals("n/a", true)) "offen" else it
+                fun norm(v: String) = splitRef(v, 0).first.ifEmpty { "offen" }.let {
+                    if (it.equals("unbekannt", true) || it == "-" || it.equals("n/a", true) ||
+                        it.equals("keine", true)) "offen" else it
                 }
-                TaskItem(text, norm(t.optString("verantwortlich")), norm(t.optString("frist")))
+                TaskItem(text, norm(t.optString("verantwortlich")), norm(t.optString("frist")), ref = ref)
             }
+        }
+
+        /** "A2 [14]" -> ("A2", 14) */
+        fun parseCompleted(raw: String, segmentCount: Int = Int.MAX_VALUE): List<Pair<String, Int>> =
+            runCatching { jsonObject(raw).optJSONArray("erledigte_aufgaben").strings() }
+                .getOrDefault(emptyList())
+                .mapNotNull { s ->
+                    val key = Regex("\\bA\\d{1,3}\\b").find(s)?.value ?: return@mapNotNull null
+                    key to splitRef(s.replace(key, ""), segmentCount).second
+                }
+
+        fun parseSensitive(raw: String, participants: List<String> = emptyList()): List<String> {
+            val people = participants.map { it.lowercase() }.toSet()
+            return runCatching { jsonObject(raw).optJSONArray("sensible_daten").strings() }
+                .getOrDefault(emptyList())
+                .map { splitRef(it, 0).first.trim().trim('"', '„', '“') }
+                .filter { it.length >= 3 && it.lowercase() !in people }
+                .filterNot { it.lowercase().startsWith("person ") }
         }
 
         /** Entfernt doppelte Aufgaben (gleicher Kern-Text). */

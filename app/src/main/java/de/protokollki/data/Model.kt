@@ -30,6 +30,7 @@ data class Segment(
 data class Speaker(
     val id: Int,
     val name: String,   // "Person 1" oder vom Nutzer umbenannt
+    val profileId: String? = null,   // per Stimmprofil automatisch erkannt
 )
 
 data class TaskItem(
@@ -37,19 +38,37 @@ data class TaskItem(
     val owner: String = "offen",
     val due: String = "offen",
     val done: Boolean = false,
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val ref: Int = -1,                  // Index des Belegsegments in Meeting.segments, -1 = keiner
+    val doneNote: String? = null,       // z. B. "Erledigt laut Besprechung vom 30.11.2026"
+)
+
+/** Stand einer offenen Aufgabe aus einer früheren Besprechung, erkannt in dieser Besprechung. */
+data class FollowUp(
+    val taskId: String,
+    val meetingId: String,              // Besprechung, aus der die Aufgabe stammt
+    val text: String,
+    val owner: String,
+    val done: Boolean,                  // laut dieser Besprechung erledigt
+    val ref: Int = -1,
 )
 
 /** Ein Abschnitt des Ergebnisprotokolls (Thema mit Ergebnis-Stichpunkten). */
 data class Topic(
     val title: String,
     val points: List<String>,
-)
+    val refs: List<Int> = emptyList(),  // je Punkt Index des Belegsegments, -1 = keiner
+) {
+    fun refAt(i: Int): Int = refs.getOrElse(i) { -1 }
+}
 
 data class Summary(
     val overview: String = "",              // 3-5 Sätze
     val topics: List<Topic> = emptyList(),
     val decisions: List<String> = emptyList(),
     val openPoints: List<String> = emptyList(),
+    val decisionRefs: List<Int> = emptyList(),
+    val openPointRefs: List<Int> = emptyList(),
 ) {
     val isEmpty get() = overview.isBlank() && topics.isEmpty()
 }
@@ -70,6 +89,10 @@ data class Meeting(
     val summary: Summary = Summary(),
     val tasks: List<TaskItem> = emptyList(),
     val error: String? = null,
+    val agenda: List<String> = emptyList(),         // Tagesordnung (vorab eingegeben)
+    val followUps: List<FollowUp> = emptyList(),    // Stand offener Aufgaben aus früheren Sitzungen
+    val sensitiveTerms: List<String> = emptyList(), // zu schwärzende Begriffe (Klientennamen usw.)
+    val audioDeleted: Boolean = false,              // Audio per Löschfrist entfernt
 ) {
     fun speakerName(id: Int): String =
         speakers.firstOrNull { it.id == id }?.name ?: "Person ${id + 1}"
@@ -81,6 +104,9 @@ data class Meeting(
 // ---------------------------------------------------------------- JSON
 
 private fun List<String>.toJson() = JSONArray().also { a -> forEach { a.put(it) } }
+private fun List<Int>.intsToJson() = JSONArray().also { a -> forEach { a.put(it) } }
+private fun JSONArray?.ints(): List<Int> =
+    if (this == null) emptyList() else (0 until length()).map { optInt(it, -1) }
 private fun JSONArray?.strings(): List<String> =
     if (this == null) emptyList() else (0 until length()).map { optString(it) }
 
@@ -90,6 +116,15 @@ fun Meeting.toJson(): JSONObject = JSONObject().apply {
     put("status", status.name); put("mode", mode.name)
     put("expectedSpeakers", expectedSpeakers)
     put("error", error)
+    put("agenda", agenda.toJson())
+    put("sensitiveTerms", sensitiveTerms.toJson())
+    put("audioDeleted", audioDeleted)
+    put("followUps", JSONArray().also { a ->
+        followUps.forEach {
+            a.put(JSONObject().put("taskId", it.taskId).put("meetingId", it.meetingId)
+                .put("text", it.text).put("owner", it.owner).put("done", it.done).put("ref", it.ref))
+        }
+    })
     put("segments", JSONArray().also { a ->
         segments.forEach {
             a.put(JSONObject().put("s", it.speakerId).put("a", it.start.toDouble())
@@ -97,22 +132,28 @@ fun Meeting.toJson(): JSONObject = JSONObject().apply {
         }
     })
     put("speakers", JSONArray().also { a ->
-        speakers.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name)) }
+        speakers.forEach {
+            a.put(JSONObject().put("id", it.id).put("name", it.name).put("profileId", it.profileId))
+        }
     })
     put("summary", JSONObject().apply {
         put("overview", summary.overview)
         put("topics", JSONArray().also { a ->
             summary.topics.forEach {
-                a.put(JSONObject().put("title", it.title).put("points", it.points.toJson()))
+                a.put(JSONObject().put("title", it.title).put("points", it.points.toJson())
+                    .put("refs", it.refs.intsToJson()))
             }
         })
         put("decisions", summary.decisions.toJson())
         put("openPoints", summary.openPoints.toJson())
+        put("decisionRefs", summary.decisionRefs.intsToJson())
+        put("openPointRefs", summary.openPointRefs.intsToJson())
     })
     put("tasks", JSONArray().also { a ->
         tasks.forEach {
             a.put(JSONObject().put("text", it.text).put("owner", it.owner)
-                .put("due", it.due).put("done", it.done))
+                .put("due", it.due).put("done", it.done).put("id", it.id).put("ref", it.ref)
+                .put("doneNote", it.doneNote))
         }
     })
 }
@@ -142,21 +183,39 @@ fun meetingFromJson(o: JSONObject): Meeting {
                 s.optString("t"))
         },
         speakers = (0 until spk.length()).map {
-            val s = spk.getJSONObject(it); Speaker(s.optInt("id"), s.optString("name"))
+            val s = spk.getJSONObject(it)
+            Speaker(s.optInt("id"), s.optString("name"),
+                if (s.isNull("profileId")) null else s.optString("profileId"))
         },
         summary = Summary(
             overview = sum.optString("overview"),
             topics = (0 until topics.length()).map {
                 val t = topics.getJSONObject(it)
-                Topic(t.optString("title"), t.optJSONArray("points").strings())
+                Topic(t.optString("title"), t.optJSONArray("points").strings(),
+                    t.optJSONArray("refs").ints())
             },
             decisions = sum.optJSONArray("decisions").strings(),
             openPoints = sum.optJSONArray("openPoints").strings(),
+            decisionRefs = sum.optJSONArray("decisionRefs").ints(),
+            openPointRefs = sum.optJSONArray("openPointRefs").ints(),
         ),
         tasks = (0 until tasks.length()).map {
             val t = tasks.getJSONObject(it)
             TaskItem(t.optString("text"), t.optString("owner", "offen"),
-                t.optString("due", "offen"), t.optBoolean("done"))
+                t.optString("due", "offen"), t.optBoolean("done"),
+                id = t.optString("id").ifEmpty { "${o.getString("id")}-$it" },
+                ref = t.optInt("ref", -1),
+                doneNote = if (t.isNull("doneNote")) null else t.optString("doneNote"))
+        },
+        agenda = o.optJSONArray("agenda").strings(),
+        sensitiveTerms = o.optJSONArray("sensitiveTerms").strings(),
+        audioDeleted = o.optBoolean("audioDeleted", false),
+        followUps = (o.optJSONArray("followUps") ?: JSONArray()).let { a ->
+            (0 until a.length()).map {
+                val f = a.getJSONObject(it)
+                FollowUp(f.optString("taskId"), f.optString("meetingId"), f.optString("text"),
+                    f.optString("owner"), f.optBoolean("done"), f.optInt("ref", -1))
+            }
         },
     )
 }

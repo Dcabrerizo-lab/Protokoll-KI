@@ -3,10 +3,13 @@ package de.protokollki.ui.screens
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,6 +24,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FormatListNumbered
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Gavel
@@ -38,6 +46,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -54,10 +63,17 @@ import de.protokollki.data.Meeting
 import de.protokollki.data.Segment
 import de.protokollki.data.TaskItem
 import de.protokollki.data.Topic as TopicData
+import de.protokollki.data.MeetingRepository
+import de.protokollki.ui.components.DueState
 import de.protokollki.ui.components.EmptyState
+import de.protokollki.ui.components.SourceChip
+import de.protokollki.ui.components.dueState
+import de.protokollki.ui.components.formatDateShort
+import de.protokollki.ui.components.isOpenValue
 import de.protokollki.ui.components.SectionHeader
 import de.protokollki.ui.components.SpeakerAvatar
 import de.protokollki.ui.components.formatDuration
+import de.protokollki.ui.theme.WarningAmber
 import de.protokollki.ui.theme.speakerColor
 import de.protokollki.ui.theme.successColor
 
@@ -69,8 +85,13 @@ fun LazyListScope.summaryItems(
     m: Meeting,
     canGenerate: Boolean,
     onGenerate: () -> Unit,
+    onCite: (Int) -> Unit = {},
+    onEditAgenda: (() -> Unit)? = null,
 ) {
     val s = m.summary
+    if (m.agenda.isNotEmpty()) {
+        item(key = "agenda") { AgendaCard(m.agenda, onEditAgenda) }
+    }
     if (s.isEmpty) {
         item(key = "sumEmpty") {
             EmptyState(
@@ -102,19 +123,23 @@ fun LazyListScope.summaryItems(
         item(key = "topicsHeader") {
             SectionHeader("Themen", icon = Icons.Filled.Topic, modifier = ItemPadding.padding(top = 12.dp))
         }
-        itemsIndexed(s.topics, key = { i, _ -> "topic_$i" }) { i, t -> TopicCard(i + 1, t) }
+        itemsIndexed(s.topics, key = { i, _ -> "topic_$i" }) { i, t -> TopicCard(i + 1, t, m, onCite) }
     }
     if (s.decisions.isNotEmpty()) {
         item(key = "decHeader") {
             SectionHeader("Beschlüsse", icon = Icons.Filled.Gavel, modifier = ItemPadding.padding(top = 12.dp))
         }
-        item(key = "decisions") { NumberedCard(s.decisions, MaterialTheme.colorScheme.primary) }
+        item(key = "decisions") {
+            NumberedCard(s.decisions, MaterialTheme.colorScheme.primary, s.decisionRefs, m, onCite)
+        }
     }
     if (s.openPoints.isNotEmpty()) {
         item(key = "openHeader") {
             SectionHeader("Offene Punkte", icon = Icons.Filled.Flag, modifier = ItemPadding.padding(top = 12.dp))
         }
-        item(key = "openPoints") { BulletCard(s.openPoints, MaterialTheme.colorScheme.tertiary) }
+        item(key = "openPoints") {
+            BulletCard(s.openPoints, MaterialTheme.colorScheme.tertiary, s.openPointRefs, m, onCite)
+        }
     }
 }
 
@@ -152,7 +177,7 @@ private fun OverviewCard(text: String) {
 }
 
 @Composable
-private fun TopicCard(number: Int, topic: TopicData) {
+private fun TopicCard(number: Int, topic: TopicData, m: Meeting, onCite: (Int) -> Unit) {
     val cs = MaterialTheme.colorScheme
     Card(
         modifier = ItemPadding.fillMaxWidth(),
@@ -180,14 +205,16 @@ private fun TopicCard(number: Int, topic: TopicData) {
             }
             if (topic.points.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
-                topic.points.forEach { p -> BulletLine(p, cs.secondary) }
+                topic.points.forEachIndexed { i, p ->
+                    BulletLine(p, cs.secondary) { SourceChip(m, topic.refAt(i), onCite) }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun BulletLine(text: String, dot: Color) {
+private fun BulletLine(text: String, dot: Color, trailing: @Composable () -> Unit = {}) {
     Row(Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.Top) {
         Box(
             Modifier
@@ -198,11 +225,18 @@ private fun BulletLine(text: String, dot: Color) {
         )
         Spacer(Modifier.width(10.dp))
         Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Box(Modifier.padding(start = 6.dp, top = 1.dp)) { trailing() }
     }
 }
 
 @Composable
-private fun NumberedCard(lines: List<String>, accent: Color) {
+private fun NumberedCard(
+    lines: List<String>,
+    accent: Color,
+    refs: List<Int> = emptyList(),
+    m: Meeting? = null,
+    onCite: (Int) -> Unit = {},
+) {
     Card(
         modifier = ItemPadding.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -232,6 +266,11 @@ private fun NumberedCard(lines: List<String>, accent: Color) {
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f).padding(top = 2.dp),
                     )
+                    if (m != null) {
+                        Box(Modifier.padding(start = 6.dp, top = 3.dp)) {
+                            SourceChip(m, refs.getOrElse(i) { -1 }, onCite)
+                        }
+                    }
                 }
             }
         }
@@ -239,7 +278,13 @@ private fun NumberedCard(lines: List<String>, accent: Color) {
 }
 
 @Composable
-private fun BulletCard(lines: List<String>, accent: Color) {
+private fun BulletCard(
+    lines: List<String>,
+    accent: Color,
+    refs: List<Int> = emptyList(),
+    m: Meeting? = null,
+    onCite: (Int) -> Unit = {},
+) {
     Card(
         modifier = ItemPadding.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -247,7 +292,11 @@ private fun BulletCard(lines: List<String>, accent: Color) {
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column(Modifier.padding(18.dp)) {
-            lines.forEach { BulletLine(it, accent) }
+            lines.forEachIndexed { i, line ->
+                BulletLine(line, accent) {
+                    if (m != null) SourceChip(m, refs.getOrElse(i) { -1 }, onCite)
+                }
+            }
         }
     }
 }
@@ -368,7 +417,24 @@ private fun SegmentRow(
 fun LazyListScope.taskItems(
     m: Meeting,
     onToggle: (Int) -> Unit,
+    onCite: (Int) -> Unit = {},
+    onOpenMeeting: (String) -> Unit = {},
 ) {
+    if (m.followUps.isNotEmpty()) {
+        item(key = "followUps") { FollowUpCard(m, onCite, onOpenMeeting) }
+    }
+    if (m.tasks.isEmpty() && m.followUps.isNotEmpty()) {
+        item(key = "taskNone") {
+            Text(
+                if (m.isBusy) "Neue Aufgaben werden ermittelt …"
+                else "In dieser Besprechung wurden keine neuen Aufgaben vereinbart.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = ItemPadding.padding(top = 8.dp),
+            )
+        }
+        return
+    }
     if (m.tasks.isEmpty()) {
         item(key = "taskEmpty") {
             EmptyState(
@@ -383,7 +449,7 @@ fun LazyListScope.taskItems(
     item(key = "taskProgress") {
         val done = m.tasks.count { it.done }
         val total = m.tasks.size
-        Column(ItemPadding.padding(bottom = 4.dp)) {
+        Column(ItemPadding.padding(bottom = 4.dp, top = if (m.followUps.isNotEmpty()) 12.dp else 0.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "$done von $total erledigt",
@@ -407,15 +473,13 @@ fun LazyListScope.taskItems(
         }
     }
     itemsIndexed(m.tasks, key = { i, _ -> "task_$i" }) { i, t ->
-        TaskCard(task = t, onToggle = { onToggle(i) })
+        TaskCard(task = t, onToggle = { onToggle(i) }) { SourceChip(m, t.ref, onCite) }
     }
 }
 
-private fun isOpenValue(v: String) = v.isBlank() || v.trim().equals("offen", ignoreCase = true)
-
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun TaskCard(task: TaskItem, onToggle: () -> Unit) {
+private fun TaskCard(task: TaskItem, onToggle: () -> Unit, source: @Composable () -> Unit = {}) {
     val cs = MaterialTheme.colorScheme
     Card(
         onClick = onToggle,
@@ -435,18 +499,34 @@ private fun TaskCard(task: TaskItem, onToggle: () -> Unit) {
                     color = if (task.done) cs.onSurfaceVariant else cs.onSurface,
                     textDecoration = if (task.done) TextDecoration.LineThrough else null,
                 )
+                val note = task.doneNote
+                if (task.done && !note.isNullOrBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.CheckCircle, contentDescription = null,
+                            tint = successColor(), modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            note,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = successColor(),
+                        )
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     MiniChip(
                         icon = Icons.Filled.Person,
                         text = if (isOpenValue(task.owner)) "Verantwortlich: offen" else task.owner,
                         muted = isOpenValue(task.owner),
                     )
-                    MiniChip(
-                        icon = Icons.Filled.CalendarToday,
-                        text = if (isOpenValue(task.due)) "Termin: offen" else task.due,
-                        muted = isOpenValue(task.due),
-                    )
+                    DueChip(task.due, done = task.done)
+                    Box(Modifier.align(Alignment.CenterVertically)) { source() }
                 }
             }
         }
@@ -468,6 +548,159 @@ private fun MiniChip(icon: ImageVector, text: String, muted: Boolean) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(13.dp))
             Spacer(Modifier.width(4.dp))
             Text(text, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+        }
+    }
+}
+
+/** Termin-Chip; überfällige Termine rot, bald fällige orange. */
+@Composable
+fun DueChip(due: String, done: Boolean = false) {
+    val cs = MaterialTheme.colorScheme
+    if (isOpenValue(due)) {
+        MiniChip(icon = Icons.Filled.CalendarToday, text = "Termin: offen", muted = true)
+        return
+    }
+    val state = if (done) DueState.NONE else dueState(due)
+    val (bg, fg) = when (state) {
+        DueState.OVERDUE -> cs.errorContainer to cs.onErrorContainer
+        DueState.TODAY, DueState.SOON -> WarningAmber.copy(alpha = 0.16f) to WarningAmber
+        else -> cs.primaryContainer.copy(alpha = 0.7f) to cs.onPrimaryContainer
+    }
+    val label = when (state) {
+        DueState.OVERDUE -> "Überfällig · $due"
+        DueState.TODAY -> "Heute · $due"
+        else -> due
+    }
+    Surface(shape = RoundedCornerShape(50), color = bg, contentColor = fg) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                if (state == DueState.OVERDUE) Icons.Filled.Schedule else Icons.Filled.CalendarToday,
+                contentDescription = null, modifier = Modifier.size(13.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+        }
+    }
+}
+
+// ================================================================ Tagesordnung
+
+@Composable
+private fun AgendaCard(agenda: List<String>, onEdit: (() -> Unit)?) {
+    val cs = MaterialTheme.colorScheme
+    Card(
+        modifier = ItemPadding.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = cs.surfaceContainerLow),
+    ) {
+        Column(Modifier.padding(start = 18.dp, end = 8.dp, top = 8.dp, bottom = 14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.FormatListNumbered, contentDescription = null,
+                    tint = cs.primary, modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Tagesordnung",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = cs.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                if (onEdit != null) {
+                    TextButton(onClick = onEdit) {
+                        Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Bearbeiten")
+                    }
+                } else {
+                    Spacer(Modifier.height(40.dp))
+                }
+            }
+            agenda.forEachIndexed { i, top ->
+                Row(Modifier.padding(vertical = 3.dp, horizontal = 2.dp), verticalAlignment = Alignment.Top) {
+                    Text(
+                        "TOP ${i + 1}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = cs.onSurfaceVariant,
+                        modifier = Modifier.width(52.dp).padding(top = 2.dp),
+                    )
+                    Text(top, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+// ================================================================ Aufgaben aus früheren Besprechungen
+
+@Composable
+private fun FollowUpCard(m: Meeting, onCite: (Int) -> Unit, onOpenMeeting: (String) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val success = successColor()
+    Card(
+        modifier = ItemPadding.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = cs.surfaceContainerLowest),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    ) {
+        Column(Modifier.padding(vertical = 12.dp)) {
+            Row(
+                modifier = Modifier.padding(horizontal = 18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.History, contentDescription = null, tint = cs.primary, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Aus früheren Besprechungen",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                val doneCount = m.followUps.count { it.done }
+                Text(
+                    "$doneCount von ${m.followUps.size} erledigt",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = cs.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            m.followUps.forEach { fu ->
+                val origin = MeetingRepository.get(fu.meetingId)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = origin != null) { onOpenMeeting(fu.meetingId) }
+                        .padding(horizontal = 18.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Icon(
+                        if (fu.done) Icons.Filled.CheckCircle else Icons.Filled.Schedule,
+                        contentDescription = if (fu.done) "erledigt" else "offen",
+                        tint = if (fu.done) success else WarningAmber,
+                        modifier = Modifier.padding(top = 2.dp).size(18.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            fu.text,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (fu.done) cs.onSurfaceVariant else cs.onSurface,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        val owner = if (isOpenValue(fu.owner)) "" else "${fu.owner} · "
+                        val from = if (origin != null) "aus „${origin.title}“ vom ${formatDateShort(origin.createdAt)}"
+                        else "aus einer gelöschten Besprechung"
+                        Text(
+                            (if (fu.done) "✓ erledigt · " else "offen · ") + owner + from,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (fu.done) success else cs.onSurfaceVariant,
+                        )
+                    }
+                    Box(Modifier.padding(start = 6.dp, top = 1.dp)) { SourceChip(m, fu.ref, onCite) }
+                }
+            }
         }
     }
 }
