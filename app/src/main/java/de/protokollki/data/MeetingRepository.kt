@@ -27,9 +27,14 @@ object MeetingRepository {
         }.map {
             // Nach Absturz/Neustart hängende Zustände zurücksetzen
             when {
-                it.status == MeetingStatus.RECORDING ->
-                    it.copy(status = if (File(it.audioFile).length() > 44) MeetingStatus.RECORDED
-                    else MeetingStatus.ERROR, error = "Aufnahme wurde unterbrochen.")
+                it.status == MeetingStatus.RECORDING -> {
+                    val f = File(it.audioFile)
+                    runCatching { de.protokollki.audio.WavIO.repairHeader(f) }
+                    if (f.length() > 16044) it.copy(status = MeetingStatus.RECORDED, error = null,
+                        durationSec = runCatching { de.protokollki.audio.WavIO.durationSec(it.audioFile) }
+                            .getOrDefault(0f))
+                    else it.copy(status = MeetingStatus.ERROR, error = "Aufnahme wurde unterbrochen.")
+                }
                 it.isBusy -> it.copy(status = MeetingStatus.RECORDED, progress = 0f,
                     progressText = "")
                 else -> it
