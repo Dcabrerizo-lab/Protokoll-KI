@@ -112,10 +112,12 @@ Java_de_protokollki_engine_LlamaNative_init(JNIEnv *env, jobject, jstring native
 
 JNIEXPORT jlong JNICALL
 Java_de_protokollki_engine_LlamaNative_load(JNIEnv *env, jobject, jstring jpath, jint n_ctx,
-                                            jint n_threads) {
+                                            jint n_threads, jboolean fast) {
     auto *e = new Engine();
     llama_model_params mp = llama_model_default_params();
     mp.n_gpu_layers = 0;
+    // Umgepackte Gewichte: schneller, aber eine zweite Kopie im RAM. Nur wenn genug frei ist.
+    mp.use_extra_bufts = fast == JNI_TRUE;
     const std::string path = jstr(env, jpath);
     e->model = llama_model_load_from_file(path.c_str(), mp);
     if (!e->model) {
@@ -128,10 +130,12 @@ Java_de_protokollki_engine_LlamaNative_load(JNIEnv *env, jobject, jstring jpath,
     cp.n_ctx = (uint32_t) std::min<int>(n_ctx, trained > 0 ? trained : n_ctx);
     cp.n_batch = BATCH_SIZE;
     cp.n_ubatch = BATCH_SIZE;
-    int threads = n_threads > 0 ? n_threads
-                                : std::max(2, std::min(6, (int) sysconf(_SC_NPROCESSORS_ONLN) - 2));
+    // Erzeugen (Token für Token) ist speichergebunden: 4 Threads auf den großen Kernen sind am
+    // schnellsten, mehr Threads landen auf den Sparkernen und bremsen. Einlesen profitiert von mehr.
+    const int cores = (int) sysconf(_SC_NPROCESSORS_ONLN);
+    int threads = n_threads > 0 ? n_threads : std::max(2, std::min(4, cores - 2));
     cp.n_threads = threads;
-    cp.n_threads_batch = threads;
+    cp.n_threads_batch = n_threads > 0 ? n_threads : std::max(2, std::min(6, cores - 2));
     cp.no_perf = true;
     // Speicher sparen: KV-Cache in 8 Bit (halbiert den größten RAM-Posten nach den Gewichten).
     // Quantisierter V-Cache braucht Flash Attention; klappt das nicht, Rückfall auf 16 Bit.
@@ -156,7 +160,7 @@ Java_de_protokollki_engine_LlamaNative_load(JNIEnv *env, jobject, jstring jpath,
     e->batch = llama_batch_ext_init(e->ctx);
     const char *tmpl = llama_model_chat_template(e->model, nullptr);
     if (tmpl) e->chat_template = tmpl;
-    LOGI("Modell geladen, n_ctx=%u, Threads=%d", llama_n_ctx(e->ctx), threads);
+    LOGI("Modell geladen, n_ctx=%u, Threads=%d, schnell=%d", llama_n_ctx(e->ctx), threads, (int) fast);
     return reinterpret_cast<jlong>(e);
 }
 

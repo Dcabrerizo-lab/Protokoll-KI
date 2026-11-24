@@ -30,7 +30,7 @@ object LlamaNative {
     }
 
     external fun init(nativeLibDir: String)
-    external fun load(modelPath: String, nCtx: Int, nThreads: Int): Long
+    external fun load(modelPath: String, nCtx: Int, nThreads: Int, fast: Boolean): Long
     external fun contextSize(handle: Long): Int
     external fun countTokens(handle: Long, text: String): Int
     external fun cancel(handle: Long)
@@ -55,11 +55,15 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
         android.util.Log.i("ProtokollKI", "Lade Sprachmodell ${set.id} mit Kontext $ctx")
         // Freigegebene Spracherkennung und Audio wirklich zurückgeben, bevor mehrere GB geladen werden
         System.gc()
-        val threads = if (crashedLastTime(context)) 4 else 0
+        val crashed = crashedLastTime(context)
+        val threads = if (crashed) 4 else 0
+        val fast = !crashed && fastAllowed(context, java.io.File(path).length())
+        android.util.Log.i("ProtokollKI", "Schnellmodus: $fast")
         appContext = context.applicationContext
         markRunning(appContext, true)
-        var h = LlamaNative.load(path, ctx, threads)
-        if (h == 0L && ctx > 4096) h = LlamaNative.load(path, 4096, threads)
+        var h = LlamaNative.load(path, ctx, threads, fast)
+        if (h == 0L && fast) h = LlamaNative.load(path, ctx, threads, false)
+        if (h == 0L && ctx > 4096) h = LlamaNative.load(path, 4096, threads, false)
         handle = h
         if (handle == 0L) throw LlmException(
             "Das Sprachmodell konnte nicht geladen werden. Eventuell ist zu wenig Arbeitsspeicher frei. " +
@@ -90,6 +94,18 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
         /** true, wenn der letzte Lauf des Sprachmodells nicht sauber beendet wurde. */
         fun crashedLastTime(context: Context): Boolean =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("running", false)
+
+        /**
+         * Schnellmodus (umgepackte Gewichte, etwa doppelt so schnelles Einlesen) braucht eine zweite
+         * Kopie der Gewichte im RAM. Nur wenn danach noch reichlich frei ist; stürzt die App trotzdem
+         * ab, schaltet der Absturzwächter ihn beim nächsten Mal ab.
+         */
+        fun fastAllowed(context: Context, modelBytes: Long): Boolean {
+            val am = context.getSystemService(android.app.ActivityManager::class.java) ?: return false
+            val mi = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+            if (mi.lowMemory) return false
+            return mi.availMem > modelBytes + 1500L * 1024 * 1024
+        }
 
         fun contextFor(context: Context, set: ModelSet, modelBytes: Long): Int {
             if (crashedLastTime(context)) return 4096

@@ -21,7 +21,7 @@ class QualityTest {
         val ctx = System.getenv("PK_CTX")?.toInt() ?: 8192
 
         LlamaNative.initForTest(lib!!)
-        val handle = LlamaNative.load(modelPath!!, ctx, 0)
+        val handle = LlamaNative.load(modelPath!!, ctx, 0, true)
         assertTrue("Modell nicht geladen", handle != 0L)
         val model = object : TextModel {
             override val contextSize = LlamaNative.contextSize(handle)
