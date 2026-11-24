@@ -176,6 +176,14 @@ jobs:
           echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
           link=$(grep -oE 'https://console\.firebase\.google\.com/[^] ]+' gcloud.txt | head -1)
           echo "link=$link" >> "$GITHUB_OUTPUT"
+      - name: Rechte des Schlüssels prüfen (bei Zugriffsfehler)
+        if: always() && steps.run.outputs.bucket == ''
+        run: |
+          grep -E "ERROR|denied|403" gcloud.txt | head -5 || true
+          SA=$(python3 -c "import json,os;print(json.load(open(os.environ['GOOGLE_APPLICATION_CREDENTIALS']))['client_email'])")
+          echo "Rollen von $SA im Projekt $GOOGLE_CLOUD_PROJECT:"
+          gcloud projects get-iam-policy "$GOOGLE_CLOUD_PROJECT" --flatten="bindings[].members" \
+            --filter="bindings.members:serviceAccount:$SA" --format="value(bindings.role)" || echo "(Rollen nicht lesbar)"
       - name: Ergebnisse holen (Systemprotokoll, Testergebnis)
         if: always() && steps.run.outputs.bucket != ''
         run: |
