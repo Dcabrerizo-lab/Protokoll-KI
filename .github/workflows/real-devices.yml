@@ -1,0 +1,199 @@
+name: Echte Handys (Firebase Test Lab)
+
+# Testet die App auf echten Handys in Googles Firebase Test Lab: Modelle laden (z. B. Premium),
+# zwei Besprechungen bis zum fertigen Protokoll verarbeiten, PDF/Word exportieren.
+# Test: app/src/androidTest/java/de/protokollki/RealDeviceTest.kt
+#
+# Kostenloser Spark-Tarif: 5 Tests auf echten Geräten pro Tag. Ein Handy = ein Test.
+# "standard" nimmt 3 Handys, damit 2 für Wiederholungen bleiben.
+# Voraussetzung: GitHub-Secret FIREBASE_SERVICE_ACCOUNT (Anleitung: docs/firebase-testlab.md).
+
+on:
+  push:
+    branches: [demo]
+  pull_request:
+    # Bei Änderungen am Test nur bauen (prüft, dass alles kompiliert), keine Gerätetests verbrauchen
+    paths:
+      - app/src/androidTest/**
+      - scripts/firebase/**
+      - .github/workflows/real-devices.yml
+  workflow_dispatch:
+    inputs:
+      auswahl:
+        description: "Welche Handys? standard = S23 + Pixel + Galaxy A (3 Tests), s23 = nur Galaxy S23 (1 Test), alle = 5 Tests"
+        type: choice
+        options: [standard, s23, alle]
+        default: standard
+      geraete:
+        description: "Optional eigene Liste modell:android-api:paket, z. B. dm1q:34:premium,dm3q:34:ultra"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-devices-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SHERPA_VERSION: "2.0.3"
+
+jobs:
+  setup:
+    name: Handys auswählen
+    runs-on: ubuntu-latest
+    outputs:
+      devices: ${{ steps.pick.outputs.devices }}
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Firebase-Zugang vorhanden?
+        id: check
+        env:
+          KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Pull Request: nur Bauprüfung, keine Gerätetests." >> "$GITHUB_STEP_SUMMARY"
+          elif [ -z "$KEY" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### ⏸️ Echte Handys: noch nicht eingerichtet"
+              echo "Das GitHub-Secret **FIREBASE_SERVICE_ACCOUNT** fehlt. Anleitung: docs/firebase-testlab.md"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: google-github-actions/auth@v2
+        if: steps.check.outputs.ready == 'true'
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+        if: steps.check.outputs.ready == 'true'
+      - name: Test-Lab-Dienste einschalten (einmalig, kostenlos)
+        if: steps.check.outputs.ready == 'true'
+        run: gcloud services enable testing.googleapis.com toolresults.googleapis.com || echo "::warning::Dienste konnten nicht automatisch eingeschaltet werden (siehe Anleitung, Schritt 2)."
+      - name: Handys aus dem Katalog wählen
+        id: pick
+        if: steps.check.outputs.ready == 'true'
+        env:
+          AUSWAHL: ${{ inputs.auswahl || 'standard' }}
+          GERAETE: ${{ inputs.geraete }}
+        run: |
+          if [ -n "$GERAETE" ]; then
+            devices=$(python3 -c "import json,os;print(json.dumps([dict(name=m,model=m,version=v,set=s) for m,v,s in (x.strip().split(':') for x in os.environ['GERAETE'].split(',') if x.strip())]))")
+          else
+            gcloud firebase test android models list --filter=form=PHYSICAL --format=json > catalog.json
+            devices=$(python3 scripts/firebase/pick_devices.py catalog.json "$AUSWAHL")
+          fi
+          echo "devices=$devices" >> "$GITHUB_OUTPUT"
+          echo "$devices"
+
+  build:
+    name: Test-App bauen (arm64)
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Android NDK und CMake installieren
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.13113456" "cmake;3.31.6" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+      - name: sherpa-onnx herunterladen
+        run: |
+          mkdir -p app/libs
+          curl -fsSL --retry 5 --retry-all-errors -o app/libs/sherpa-onnx.aar \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/sherpa-onnx-${SHERPA_VERSION}.aar"
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: android-arm64-testlab
+      - name: App und Gerätetests bauen (arm64, wie auf echten Handys)
+        run: ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest -Ppk.abis=arm64-v8a
+      - uses: actions/upload-artifact@v4
+        with:
+          name: testlab-apks
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+
+  device:
+    name: ${{ matrix.d.name }} · ${{ matrix.d.set }}
+    needs: [setup, build]
+    if: needs.setup.outputs.ready == 'true' && needs.setup.outputs.devices != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        d: ${{ fromJSON(needs.setup.outputs.devices) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: testlab-apks
+          path: apks
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Auf echtem Handy testen (bis 45 min)
+        id: run
+        run: |
+          APP=$(find apks -name app-debug.apk | head -1)
+          TEST=$(find apks -name app-debug-androidTest.apk | head -1)
+          DIR="run-${GITHUB_RUN_ID}-${{ strategy.job-index }}-${{ matrix.d.model }}"
+          set +e
+          gcloud firebase test android run \
+            --type instrumentation \
+            --app "$APP" --test "$TEST" \
+            --device "model=${{ matrix.d.model }},version=${{ matrix.d.version }},locale=de_DE,orientation=portrait" \
+            --test-targets "class de.protokollki.RealDeviceTest" \
+            --environment-variables "modelSet=${{ matrix.d.set }}" \
+            --timeout 45m \
+            --num-flaky-test-attempts 0 \
+            --results-dir "$DIR" 2>&1 | tee gcloud.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          bucket=$(grep -oE 'storage/browser/[^/]+' gcloud.txt | head -1 | cut -d/ -f3)
+          echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
+          link=$(grep -oE 'https://console\.firebase\.google\.com/[^] ]+' gcloud.txt | head -1)
+          echo "link=$link" >> "$GITHUB_OUTPUT"
+      - name: Ergebnisse holen (Systemprotokoll, Testergebnis)
+        if: always() && steps.run.outputs.bucket != ''
+        run: |
+          mkdir -p results
+          gsutil -m rsync -r -x '.*\.mp4$' "gs://${{ steps.run.outputs.bucket }}/${{ steps.run.outputs.dir }}" results || true
+          find results -type f | head -50
+      - name: Bericht
+        if: always()
+        run: |
+          mkdir -p results
+          python3 scripts/firebase/report.py results "${{ matrix.d.name }} · Paket ${{ matrix.d.set }}" \
+            "${{ steps.run.outputs.link }}" "${{ steps.run.outputs.code }}" | tee report.md
+          ok=${PIPESTATUS[0]}
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          if grep -qiE "quota|limit|RESOURCE_EXHAUSTED" gcloud.txt 2>/dev/null; then
+            echo "⚠️ Tageslimit des kostenlosen Tarifs (5 Gerätetests) erreicht – morgen erneut starten." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "================ ERGEBNIS ================"
+          cat report.md
+          exit $ok
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firebase-${{ matrix.d.model }}-${{ strategy.job-index }}
+          path: |
+            results/
+            gcloud.txt
+            report.md
+          if-no-files-found: ignore
