@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.FiberManualRecord
@@ -42,6 +43,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -72,11 +74,12 @@ fun StatusSection(
     onRetry: () -> Unit,
     onOpenModels: () -> Unit,
     modifier: Modifier = Modifier,
+    onSendToPc: (() -> Unit)? = null,
 ) {
     when {
         m.status == MeetingStatus.RECORDING -> RecordingCard(recordingThis, onOpenRecording, modifier)
         m.status == MeetingStatus.RECORDED ->
-            ReadyCard(m, modelsInstalled, onProcess, onOpenModels, modifier)
+            ReadyCard(m, modelsInstalled, onProcess, onOpenModels, modifier, onSendToPc)
         m.isBusy -> ProcessingCard(m, onCancel, modifier)
         m.status == MeetingStatus.ERROR -> ErrorCard(m, modelsInstalled, onRetry, modifier)
         else -> Unit
@@ -132,6 +135,7 @@ private fun ReadyCard(
     onProcess: (Int) -> Unit,
     onOpenModels: () -> Unit,
     modifier: Modifier,
+    onSendToPc: (() -> Unit)? = null,
 ) {
     val cs = MaterialTheme.colorScheme
     var count by remember(m.id) { mutableIntStateOf(m.expectedSpeakers) }
@@ -185,6 +189,16 @@ private fun ReadyCard(
                     Icon(Icons.Filled.CloudDownload, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text("Zuerst KI-Modelle herunterladen")
+                }
+            }
+            if (onSendToPc != null) {
+                TextButton(
+                    onClick = onSendToPc,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                ) {
+                    Icon(Icons.Filled.Computer, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Lieber am PC auswerten")
                 }
             }
         }

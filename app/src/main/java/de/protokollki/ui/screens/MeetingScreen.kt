@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -226,6 +227,7 @@ private fun MeetingContent(
     var showAgenda by remember { mutableStateOf(false) }
     var showSensitive by remember { mutableStateOf(false) }
     var showTemplates by remember { mutableStateOf(false) }
+    var showSendToPc by remember { mutableStateOf(false) }
     var segmentHandled by rememberSaveable(m.id) { mutableStateOf(false) }
     var quoteRef by remember { mutableStateOf<Int?>(null) }
     var lastQuote by remember { mutableIntStateOf(-1) }
@@ -504,6 +506,12 @@ private fun MeetingContent(
                                     onClick = { exportMenu = true },
                                 )
                                 DropdownMenuItem(
+                                    text = { Text("Am PC auswerten") },
+                                    leadingIcon = { Icon(Icons.Filled.Computer, contentDescription = null) },
+                                    enabled = m.status != MeetingStatus.RECORDING && !busy,
+                                    onClick = { menuOpen = false; showSendToPc = true },
+                                )
+                                DropdownMenuItem(
                                     text = { Text("Text kopieren") },
                                     leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
                                     onClick = {
@@ -632,6 +640,7 @@ private fun MeetingContent(
                             if (m.segments.isEmpty()) process(m.expectedSpeakers) else regenerate()
                         },
                         onOpenModels = onOpenSettings,
+                        onSendToPc = { showSendToPc = true },
                         modifier = Modifier.padding(horizontal = 16.dp),
                     )
                 }
@@ -828,6 +837,14 @@ private fun MeetingContent(
                     }
                 }
             },
+        )
+    }
+
+    if (showSendToPc) {
+        SendToPcDialog(
+            m = m,
+            onDismiss = { showSendToPc = false },
+            onResult = { msg -> scope.launch { snackbar.showSnackbar(msg, duration = SnackbarDuration.Long) } },
         )
     }
 

@@ -141,8 +141,18 @@ class MainActivity : ComponentActivity() {
             intent.getStringExtra("path")?.let { sharedUri.value = Uri.fromFile(java.io.File(it)) }
             return
         }
-        if (intent.action != Intent.ACTION_SEND) return
         val type = intent.type.orEmpty()
+        // .protokoll-Datei vom PC geöffnet (Dateimanager) oder geteilt
+        val isPcFile = type == "application/octet-stream" || type == "application/zip"
+        if (intent.action == Intent.ACTION_VIEW) {
+            intent.data?.let { sharedUri.value = it }
+            return
+        }
+        if (intent.action != Intent.ACTION_SEND) return
+        if (isPcFile) {
+            IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.let { sharedUri.value = it }
+            return
+        }
         val isDoc = runCatching { de.protokollki.importdoc.ProtocolImporter.isDocument(type, null) }
             .getOrDefault(false)
         if (!type.startsWith("audio/") && !type.startsWith("video/") && !isDoc) return

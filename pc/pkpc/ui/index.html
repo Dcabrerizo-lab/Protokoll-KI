@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Protokoll KI</title>
+<style>
+:root{
+  --bg:#F5F6F8; --panel:#FFFFFF; --side:#FBFBFD; --line:#E4E6EC; --text:#14161C; --muted:#646B79;
+  --brand:#4F46E5; --brand-2:#6D4AC9; --brand-soft:#ECEBFF; --rec:#EF4444; --ok:#16A34A; --warn:#D97706; --err:#B91C1C;
+  --radius:14px; --shadow:0 1px 2px rgba(16,24,40,.05),0 4px 14px rgba(16,24,40,.06);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14.5px/1.5 "Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif}
+button{font:inherit;cursor:pointer}
+input,select,textarea{font:inherit;color:inherit}
+.app{display:grid;grid-template-columns:300px 1fr;height:100vh}
+aside{background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.brand{display:flex;align-items:center;gap:10px;padding:18px 18px 10px}
+.logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#6366F1,#8B5CF6);display:grid;place-items:center;color:#fff;font-weight:700}
+.brand b{font-size:16px}.brand small{display:block;color:var(--muted);font-size:12px;margin-top:-2px}
+.actions{display:grid;gap:8px;padding:8px 14px 12px}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:9px 14px;display:inline-flex;align-items:center;gap:8px;justify-content:center;color:var(--text);transition:.12s}
+.btn:hover{border-color:#C9CDD6;background:#F9FAFB}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn.primary:hover{background:#4338CA}
+.btn.rec{background:var(--rec);border-color:var(--rec);color:#fff;font-weight:600;padding:12px}
+.btn.rec:hover{background:#DC2626}
+.btn.ghost{border-color:transparent;background:transparent}
+.btn.ghost:hover{background:#EEF0F4}
+.btn.small{padding:6px 10px;font-size:13px}
+.btn:disabled{opacity:.5;cursor:default}
+.list{flex:1;overflow:auto;padding:4px 10px 10px}
+.group{font-size:12px;color:var(--muted);font-weight:600;padding:12px 8px 4px;text-transform:uppercase;letter-spacing:.04em}
+.item{display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:10px;padding:9px 10px;margin:1px 0}
+.item:hover{background:#EEF0F4}.item.sel{background:var(--brand-soft)}
+.item .t{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .s{font-size:12.5px;color:var(--muted);display:flex;gap:6px;align-items:center}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;background:#A0A6B2}
+.dot.ok{background:var(--ok)}.dot.busy{background:var(--brand);animation:pulse 1.2s infinite}.dot.err{background:var(--rec)}.dot.rec{background:var(--rec);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.35}}
+.foot{border-top:1px solid var(--line);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.offline{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center}
+main{overflow:auto;min-width:0}
+.wrap{max-width:980px;margin:0 auto;padding:28px 32px 60px}
+h1{font-size:24px;margin:0 0 4px;letter-spacing:-.01em}
+h2{font-size:17px;margin:0 0 10px}
+.muted{color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin:16px 0}
+.drop{border:2px dashed #C7CBEF;border-radius:18px;background:linear-gradient(180deg,#FAFAFF,#F4F4FF);padding:38px 24px;text-align:center}
+.drop .big{font-size:19px;font-weight:600;margin:10px 0 4px}
+.ways{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px}
+.way{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);text-align:left}
+.way .ic{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:var(--brand-soft);color:var(--brand);margin-bottom:10px}
+.way b{display:block;margin-bottom:4px}
+.way p{margin:0 0 12px;color:var(--muted);font-size:13.5px}
+.banner{display:flex;gap:14px;align-items:center;background:#EEF7F1;border:1px solid #BFE3CB;border-radius:var(--radius);padding:14px 16px;margin:0 0 16px}
+.banner.info{background:#EEF0FF;border-color:#CFCBFF}
+.banner.warn{background:#FFF7ED;border-color:#FED7AA}
+.banner .grow{flex:1;min-width:0}
+.banner b{display:block}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.spacer{flex:1}
+.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 10px;font-size:12.5px;background:#EEF0F4;color:#3B4150}
+.chip.ok{background:#E8F6EE;color:#15803D}.chip.busy{background:var(--brand-soft);color:var(--brand)}.chip.err{background:#FDECEC;color:var(--err)}
+.field{display:grid;gap:6px;margin-bottom:14px}
+.field label{font-weight:600;font-size:13.5px}
+.field .hint{font-size:12.5px;color:var(--muted)}
+input[type=text],select,textarea{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 11px;background:#fff;outline:none}
+input[type=text]:focus,select:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px #E0DEFF}
+textarea{resize:vertical;min-height:70px}
+.seg{display:inline-flex;background:#EEF0F4;border-radius:10px;padding:3px}
+.seg button{border:0;background:transparent;border-radius:8px;padding:7px 14px;color:var(--muted)}
+.seg button.on{background:#fff;color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.08);font-weight:600}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.tpl{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
+.tpl button{text-align:left;border:1px solid var(--line);background:#fff;border-radius:10px;padding:10px}
+.tpl button.on{border-color:var(--brand);box-shadow:0 0 0 3px #E0DEFF}
+.tpl small{display:block;color:var(--muted);font-size:12px}
+.progress{height:8px;background:#ECEEF3;border-radius:99px;overflow:hidden}
+.progress>div{height:100%;background:linear-gradient(90deg,#6366F1,#8B5CF6);border-radius:99px;transition:width .4s}
+.steps{display:flex;gap:18px;margin:14px 0 8px;flex-wrap:wrap}
+.step{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:13.5px}
+.step i{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:#ECEEF3;font-style:normal;font-size:12px;font-weight:700}
+.step.on{color:var(--text);font-weight:600}.step.on i{background:var(--brand);color:#fff}
+.step.done i{background:var(--ok);color:#fff}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:18px 0 0}
+.tabs button{border:0;background:transparent;padding:10px 14px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button.on{color:var(--brand);border-color:var(--brand);font-weight:600}
+.doc h3{font-size:15px;margin:18px 0 6px}
+.doc ul{margin:4px 0 8px;padding-left:20px}.doc li{margin:3px 0}
+.ref{font-size:11px;color:var(--brand);background:var(--brand-soft);border-radius:6px;padding:0 5px;margin-left:4px;cursor:pointer;border:0}
+table.tasks{width:100%;border-collapse:collapse}
+table.tasks th{text-align:left;font-size:12.5px;color:var(--muted);font-weight:600;padding:8px;border-bottom:1px solid var(--line)}
+table.tasks td{padding:9px 8px;border-bottom:1px solid #F0F1F4;vertical-align:top}
+table.tasks tr.done td{color:var(--muted);text-decoration:line-through}
+.utt{display:grid;grid-template-columns:150px 1fr;gap:12px;padding:8px 6px;border-radius:8px;cursor:pointer}
+.utt:hover{background:#F6F7FA}
+.utt .who{font-weight:600;font-size:13.5px}
+.utt .who small{display:block;color:var(--muted);font-weight:400}
+.sp{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.recview{min-height:100%;background:radial-gradient(1200px 600px at 50% 0%,#2A2470,#120F2E 60%,#0B0A1A);color:#fff;display:flex;align-items:center;justify-content:center}
+.recbox{text-align:center;max-width:560px;padding:30px}
+.timer{font-size:64px;font-weight:300;letter-spacing:.02em;font-variant-numeric:tabular-nums;margin:12px 0}
+.meter{display:flex;gap:3px;justify-content:center;align-items:flex-end;height:60px;margin:10px 0 24px}
+.meter span{width:6px;border-radius:3px;background:linear-gradient(180deg,#A5B4FC,#8B5CF6);transition:height .12s}
+.recbtns{display:flex;gap:14px;justify-content:center}
+.round{width:72px;height:72px;border-radius:50%;border:0;display:grid;place-items:center;color:#fff}
+.round.stop{background:var(--rec)}.round.pause{background:rgba(255,255,255,.14)}
+.recview input{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#fff;text-align:center;border-radius:10px;padding:9px;width:100%}
+.overlay{position:fixed;inset:0;background:rgba(79,70,229,.10);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;z-index:50}
+.overlay.on{display:flex}
+.overlay div{background:#fff;border:2px dashed var(--brand);border-radius:20px;padding:40px 60px;font-size:20px;font-weight:600;color:var(--brand)}
+.modal{position:fixed;inset:0;background:rgba(15,17,25,.45);display:none;align-items:center;justify-content:center;z-index:40;padding:20px}
+.modal.on{display:flex}
+.modal .box{background:#fff;border-radius:18px;max-width:640px;width:100%;max-height:90vh;overflow:auto;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.modal ol{padding-left:20px}.modal li{margin:6px 0}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#1F2230;color:#fff;padding:10px 16px;border-radius:10px;opacity:0;transition:.25s;pointer-events:none;z-index:60;max-width:80vw}
+.toast.on{opacity:1}
+.setrow{display:flex;gap:12px;align-items:center;border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0}
+.setrow.on{border-color:var(--brand);background:#FAFAFF}
+.empty{color:var(--muted);text-align:center;padding:30px 10px;font-size:13.5px}
+svg{flex:none}
+.livetext{max-height:220px;overflow:auto;background:#FAFAFC;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13.5px;margin-top:12px}
+.err{color:var(--err)}
+@media (max-width:860px){.app{grid-template-columns:1fr}aside{display:none}.ways{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand"><div class="logo">P</div><div><b>Protokoll KI</b><small>für Windows</small></div></div>
+    <div class="actions">
+      <button class="btn rec" id="btnRec" onclick="startRecording()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
+        Aufnehmen</button>
+      <button class="btn" onclick="pickFile()">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0-12 4 4m-4-4-4 4M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+        Datei öffnen</button>
+    </div>
+    <div class="list" id="list"></div>
+    <div class="foot">
+      <span class="offline" title="Alle Aufnahmen und Protokolle bleiben auf diesem PC.">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        Offline · bleibt auf diesem PC</span>
+      <button class="btn ghost small" onclick="openSettings()" title="Einstellungen">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+      </button>
+    </div>
+  </aside>
+  <main id="main"></main>
+</div>
+<input type="file" id="file" hidden accept=".protokoll,audio/*,video/*,.m4a,.mp3,.wav,.ogg,.opus,.flac,.aac,.amr,.3gp,.mp4,.webm">
+<div class="overlay" id="overlay"><div>Loslassen zum Übernehmen</div></div>
+<div class="modal" id="modal"><div class="box" id="modalBox"></div></div>
+<div class="toast" id="toast"></div>
+<script>
+const TOKEN = "__TOKEN__";
+let S = null;            // Programmzustand
+let sel = null;          // gewählte Besprechung
+let M = null;            // Details der gewählten Besprechung
+let tab = "protokoll";
+let cfg = {};           // Auswahl vor dem Auswerten
+let uploading = null;
+let lastFocus = 0;
+let editing = false;
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const COLORS = ["#4F46E5","#0F766E","#C2410C","#BE185D","#0369A1","#7E22CE","#15803D","#A16207"];
+
+async function api(path, body) {
+  const opt = {headers: {"X-Token": TOKEN}};
+  if (body !== undefined) { opt.method = "POST"; opt.body = JSON.stringify(body); opt.headers["Content-Type"] = "application/json"; }
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || "Fehler");
+  return j;
+}
+function toast(t, ms = 3200) { const e = $("#toast"); e.textContent = t; e.classList.add("on"); clearTimeout(e._t); e._t = setTimeout(() => e.classList.remove("on"), ms); }
+function fmtDur(s) { s = Math.round(s || 0); if (s < 60) return s + " Sek."; const h = Math.floor(s/3600), m = Math.floor(s%3600/60); return h ? `${h} Std. ${m} Min.` : `${m} Min.`; }
+function fmtTime(s) { s = Math.floor(s || 0); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60; const p = n => String(n).padStart(2,"0"); return h ? `${h}:${p(m)}:${p(x)}` : `${p(m)}:${p(x)}`; }
+function fmtDate(ms) { const d = new Date(ms); return d.toLocaleDateString("de-DE", {weekday:"short", day:"2-digit", month:"2-digit", year:"numeric"}) + ", " + d.toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit"}) + " Uhr"; }
+function dayKey(ms) { const d = new Date(ms), t = new Date(); const y = new Date(); y.setDate(t.getDate()-1);
+  if (d.toDateString() === t.toDateString()) return "Heute"; if (d.toDateString() === y.toDateString()) return "Gestern";
+  return d.toLocaleDateString("de-DE", {month:"long", year:"numeric"}); }
+function gb(b) { return (b/1e9).toLocaleString("de-DE", {maximumFractionDigits:1}) + " GB"; }
+const BUSY = ["QUEUED","TRANSCRIBING","SUMMARIZING"];
+function statusChip(b) {
+  if (b.status === "DONE") return `<span class="chip ok">Fertig</span>`;
+  if (b.status === "ERROR") return `<span class="chip err">Fehler</span>`;
+  if (b.status === "RECORDING") return `<span class="chip err">Aufnahme läuft</span>`;
+  if (BUSY.includes(b.status)) return `<span class="chip busy">In Arbeit · ${Math.round(b.progress*100)} %</span>`;
+  return `<span class="chip">Bereit zum Auswerten</span>`;
+}
+function dotClass(b) { return b.status === "DONE" ? "ok" : b.status === "ERROR" ? "err" : b.status === "RECORDING" ? "rec" : BUSY.includes(b.status) ? "busy" : ""; }
+
+// ------------------------------------------------------------------ Liste links
+function renderList() {
+  const ms = S.meetings;
+  if (!ms.length) { $("#list").innerHTML = `<div class="empty">Noch keine Besprechungen.<br>Nimm etwas auf oder ziehe eine Datei hierher.</div>`; return; }
+  let html = "", last = "";
+  for (const b of ms) {
+    const k = dayKey(b.createdAt);
+    if (k !== last) { html += `<div class="group">${esc(k)}</div>`; last = k; }
+    const sub = BUSY.includes(b.status) ? `${Math.round(b.progress*100)} % · ${esc(b.progressText || "wartet")}` :
+      b.status === "DONE" ? `${fmtDur(b.durationSec)} · ${b.taskCount} Aufgaben` :
+      b.status === "RECORDING" ? "Aufnahme läuft" : b.status === "ERROR" ? "Fehler" : `${fmtDur(b.durationSec)} · bereit`;
+    html += `<button class="item ${b.id === sel ? "sel" : ""}" onclick="select('${b.id}')">
+      <div class="t">${esc(b.title || "Besprechung")}</div>
+      <div class="s"><span class="dot ${dotClass(b)}"></span>${b.source === "phone" ? "📱 " : ""}${sub}</div></button>`;
+  }
+  $("#list").innerHTML = html;
+}
+
+// ------------------------------------------------------------------ Hauptbereich
+function render() {
+  renderList();
+  if (S.recorder.active) return renderRecording();
+  if (!sel || !M) return renderHome();
+  renderMeeting();
+}
+
+function pendingBanner() {
+  return S.pending.map(p => `<div class="banner">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#15803D" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>
+    <div class="grow"><b>Neue Aufnahme vom Handy gefunden</b><span class="muted">${esc(p.name)} · im Download-Ordner</span></div>
+    <button class="btn ghost small" onclick="dismiss('${encodeURIComponent(p.path)}')">Ignorieren</button>
+    <button class="btn primary" onclick="importPath('${encodeURIComponent(p.path)}')">Übernehmen</button></div>`).join("");
+}
+
+function modelBanner() {
+  const md = S.models, d = md.download;
+  if (md.ready && !d.running) return "";
+  if (d.running) {
+    const f = d.total ? d.done / d.total : 0;
+    return `<div class="card"><h2>KI wird eingerichtet …</h2>
+      <p class="muted" style="margin-top:-4px">Einmalig. Danach arbeitet Protokoll KI komplett ohne Internet.</p>
+      <div class="progress"><div style="width:${(f*100).toFixed(1)}%"></div></div>
+      <div class="row" style="margin-top:8px"><span class="muted">${gb(d.done)} von ${gb(d.total)} · ${esc(d.status)}</span><span class="spacer"></span>
+      <button class="btn small" onclick="api('/api/models/cancel',{})">Anhalten</button></div></div>`;
+  }
+  const rec = md.sets.find(s => s.id === md.recommended) || md.sets[0];
+  return `<div class="card" style="border-color:#CFCBFF">
+    <h2>Einmalig: KI einrichten</h2>
+    <p class="muted" style="margin-top:-4px">Für Spracherkennung, Sprechererkennung und Protokoll lädt Protokoll KI einmalig die KI-Modelle (${gb(rec.bytes)}).
+    Danach läuft alles offline, nichts verlässt diesen PC.</p>
+    ${d.error ? `<p class="err">${esc(d.error)}</p>` : ""}
+    <div class="row"><button class="btn primary" onclick="download('${rec.id}')">Jetzt einrichten (${esc(rec.label)})</button>
+    <span class="muted">Empfohlen für diesen PC (${String(md.ramGb).replace(".", ",")} GB Arbeitsspeicher)</span>
+    <span class="spacer"></span><button class="btn ghost small" onclick="openSettings()">Andere Qualität wählen</button></div></div>`;
+}
+
+let lastMain = "";
+function setMain(html) { if (html !== lastMain || !$("#main").firstChild) { $("#main").innerHTML = html; lastMain = html; } }
+function renderHome() {
+  setMain(`<div class="wrap">
+    ${pendingBanner()}
+    <h1>Besprechung protokollieren</h1>
+    <p class="muted" style="margin-top:0">Aufnehmen, Datei hineinziehen oder vom Handy schicken. Protokoll, Aufgaben und Sprecher entstehen automatisch, komplett offline.</p>
+    ${modelBanner()}
+    ${uploading ? `<div class="card"><b>Übernehme ${esc(uploading.name)} …</b><div class="progress" style="margin-top:10px"><div style="width:${uploading.f*100}%"></div></div></div>` : ""}
+    <div class="drop" id="dropzone">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#4F46E5" stroke-width="1.6"><path d="M12 3v12m0-12 4 4m-4-4-4 4M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+      <div class="big">Aufnahme hierher ziehen</div>
+      <div class="muted">Audio oder Video (z. B. .m4a, .mp3, .wav, .mp4) oder eine <b>.protokoll</b>-Datei aus der Handy-App</div>
+      <div style="margin-top:14px"><button class="btn primary" onclick="pickFile()">Datei auswählen</button></div>
+    </div>
+    <div class="ways">
+      <div class="way"><div class="ic">🎙️</div><b>Am PC aufnehmen</b><p>Mit dem Mikrofon des PCs oder einem Konferenzmikrofon. Danach wertet der PC sofort aus.</p>
+        <button class="btn small" onclick="startRecording()">Aufnahme starten</button></div>
+      <div class="way"><div class="ic">📱</div><b>Vom Handy</b><p>In der App bei der Aufnahme „Am PC auswerten“ tippen und per Quick Share oder USB-Kabel schicken.</p>
+        <button class="btn small" onclick="phoneHelp()">So geht’s</button></div>
+      <div class="way"><div class="ic">📄</div><b>Ergebnis</b><p>Word und PDF landen automatisch im Ordner „Dokumente\\Protokoll KI“. Auf Wunsch zurück aufs Handy.</p>
+        <button class="btn small" onclick="api('/api/open',{kind:'outputDir'})">Ordner öffnen</button></div>
+    </div></div>`);
+}
+
+let meterBars = Array(28).fill(0.05);
+function renderRecording() {
+  const r = S.recorder;
+  meterBars.shift(); meterBars.push(r.paused ? 0.03 : Math.max(0.05, r.level));
+  if (!$("#recview")) {
+    lastMain = "";
+    $("#main").innerHTML = `<div class="recview" id="recview"><div class="recbox">
+      <div class="chip" style="background:rgba(239,68,68,.18);color:#FCA5A5" id="recState">● Aufnahme läuft</div>
+      <div class="timer" id="recTimer">00:00</div>
+      <div class="meter" id="meter">${meterBars.map(() => "<span></span>").join("")}</div>
+      <div style="margin:0 auto 26px;max-width:360px"><input id="recTitle" placeholder="Titel (optional)" value="${esc((S.meetings.find(m => m.id === r.meetingId) || {}).title || "")}"></div>
+      <div class="recbtns">
+        <button class="round pause" id="btnPause" onclick="pauseRec()" title="Pause"></button>
+        <button class="round stop" onclick="stopRec()" title="Beenden"><svg width="26" height="26" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+      </div>
+      <p style="opacity:.6;font-size:13px;margin-top:22px">Die Aufnahme wird laufend gespeichert. Beim Beenden beginnt die Auswertung.</p>
+      ${r.error ? `<p style="color:#FCA5A5">${esc(r.error)}</p>` : ""}
+    </div></div>`;
+  }
+  $("#recTimer").textContent = fmtTime(r.seconds);
+  $("#recState").textContent = r.paused ? "❚❚ Pausiert" : "● Aufnahme läuft";
+  $("#btnPause").innerHTML = r.paused ? `<svg width="26" height="26" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg>` :
+    `<svg width="26" height="26" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>`;
+  [...$("#meter").children].forEach((s, i) => s.style.height = (6 + meterBars[i] * 54) + "px");
+}
+
+function setupForm(m) {
+  if (cfg.id !== m.id) {
+    cfg = {id: m.id, title: m.title, mode: m.mode, template: m.template, speakers: m.expectedSpeakers || 0,
+            agenda: (m.agenda || []).join("\n"), location: m.location || "", chair: m.chair || "", minuteTaker: m.minuteTaker || ""};
+  }
+}
+
+function renderMeeting() {
+  const m = M, b = m.brief;
+  const active = document.activeElement;
+  if (editing && active && active.closest && active.closest("#main") && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
+  let body = "";
+  if (b.status === "RECORDED" || (b.status === "ERROR" && m.hasAudio && !(m.segments || []).length)) body = renderSetup(m);
+  else if (BUSY.includes(b.status)) body = renderBusy(m);
+  else if (b.status === "ERROR") body = renderSetup(m);
+  else body = renderResult(m);
+  setMain(`<div class="wrap">
+    ${pendingBanner()}
+    <div class="row" style="align-items:flex-start">
+      <div style="flex:1;min-width:0">
+        <h1 contenteditable="${b.status === "DONE"}" spellcheck="false" onblur="renameTitle(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}">${esc(m.title || "Besprechung")}</h1>
+        <div class="row muted" style="gap:14px;font-size:13.5px">
+          <span>${fmtDate(m.createdAt)}</span><span>${fmtDur(m.durationSec)}</span>
+          ${(m.speakers || []).length ? `<span>${m.speakers.length} Personen</span>` : ""}
+          ${b.source === "phone" ? `<span>📱 vom Handy</span>` : b.source === "pc-mic" ? `<span>🎙️ am PC aufgenommen</span>` : ""}
+          ${statusChip(b)}
+        </div>
+      </div>
+      <button class="btn ghost small" onclick="delMeeting()" title="Löschen">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14"/></svg></button>
+    </div>
+    ${body}</div>`);
+  if (m.hasAudio && $("#player") && !$("#player").src) $("#player").src = `/api/audio/${m.id}?t=${TOKEN}`;
+}
+
+function renderSetup(m) {
+  setupForm(m);
+  const err = m.brief.status === "ERROR" ? `<div class="banner warn"><div class="grow"><b>Das hat nicht geklappt</b><span>${esc(m.error || "")}</span></div></div>` : "";
+  const ready = S.models.ready;
+  const formal = cfg.template !== "ALLGEMEIN";
+  return `${err}${ready ? "" : modelBanner()}
+  <div class="card"><h2>Auswertung</h2>
+    <div class="field"><label>Titel</label><input type="text" id="fTitle" value="${esc(cfg.title)}" oninput="cfg.title=this.value" onfocus="editing=true" onblur="editing=false"></div>
+    <div class="field"><label>Art des Protokolls</label>
+      <div class="seg">${S.modes.map(x => `<button class="${cfg.mode === x.id ? "on" : ""}" onclick="cfg.mode='${x.id}';render()">${esc(x.label)}</button>`).join("")}</div>
+      <span class="hint">${cfg.mode === "WORT" ? "Alles, was gesagt wurde, mit Namen und Uhrzeit, dazu die Aufgaben." : "Zusammenfassung, Themen, Beschlüsse, offene Punkte und Aufgaben."}</span></div>
+    <div class="field"><label>Vorlage</label>
+      <div class="tpl">${S.templates.map(t => `<button class="${cfg.template === t.id ? "on" : ""}" onclick="cfg.template='${t.id}';render()"><b>${esc(t.label)}</b><small>${esc(t.description)}</small></button>`).join("")}</div></div>
+    ${formal ? `<div class="grid2">
+      <div class="field"><label>Ort</label><input type="text" value="${esc(cfg.location)}" oninput="cfg.location=this.value" onfocus="editing=true" onblur="editing=false"></div>
+      <div class="field"><label>Leitung</label><input type="text" value="${esc(cfg.chair)}" oninput="cfg.chair=this.value" onfocus="editing=true" onblur="editing=false"></div>
+      <div class="field"><label>Protokollführung</label><input type="text" value="${esc(cfg.minuteTaker)}" oninput="cfg.minuteTaker=this.value" onfocus="editing=true" onblur="editing=false"></div></div>` : ""}
+    <div class="grid2">
+      <div class="field"><label>Wie viele Personen sprechen?</label>
+        <select onchange="cfg.speakers=+this.value">${[0,2,3,4,5,6,7,8,9,10].map(n => `<option value="${n}" ${cfg.speakers === n ? "selected" : ""}>${n ? n + " Personen" : "Automatisch erkennen"}</option>`).join("")}</select>
+        <span class="hint">Wenn bekannt, wird die Sprechererkennung genauer.</span></div>
+      <div class="field"><label>Tagesordnung <span class="muted" style="font-weight:400">(optional, ein Punkt pro Zeile)</span></label>
+        <textarea oninput="cfg.agenda=this.value" onfocus="editing=true" onblur="editing=false" placeholder="z. B. Umzug&#10;Tourenplanung">${esc(cfg.agenda)}</textarea></div>
+    </div>
+    <div class="row"><button class="btn primary" ${ready ? "" : "disabled"} onclick="processNow()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 6.9H22l-6 4.6 2.3 7L12 16l-6.3 4.5 2.3-7-6-4.6h7.6z"/></svg>
+      Protokoll erstellen</button>
+      <span class="muted">${ready ? "Dauert je nach PC etwa ein Viertel bis die Hälfte der Aufnahmedauer." : "Bitte zuerst die KI einrichten."}</span></div>
+    ${m.hasAudio ? `<audio id="player" controls preload="none" style="width:100%;margin-top:16px"></audio>` : ""}
+  </div>`;
+}
+
+function renderBusy(m) {
+  const b = m.brief;
+  const phase = b.status === "TRANSCRIBING" ? (b.progressText.startsWith("Erkenne") ? 0 : 1) : b.status === "SUMMARIZING" ? 2 : -1;
+  const labels = ["Sprecher erkennen", "Mitschreiben", "Protokoll schreiben"];
+  const live = (m.segments || []).slice(-12);
+  return `<div class="card"><h2>${b.status === "QUEUED" ? "Wartet auf Verarbeitung …" : "Protokoll entsteht …"}</h2>
+    <div class="steps">${labels.map((l, i) => `<div class="step ${i < phase ? "done" : i === phase ? "on" : ""}"><i>${i < phase ? "✓" : i + 1}</i>${l}</div>`).join("")}</div>
+    <div class="progress"><div style="width:${(b.progress*100).toFixed(1)}%"></div></div>
+    <div class="row" style="margin-top:8px"><span class="muted">${esc(b.progressText)}</span><span class="spacer"></span>
+      <button class="btn small" onclick="api('/api/cancel',{})">Abbrechen</button></div>
+    ${live.length ? `<div class="livetext">${live.map(s => `<div><b style="color:${COLORS[s.s % 8]}">${esc(spName(m, s.s))}:</b> ${esc(s.t)}</div>`).join("")}</div>` : ""}
+    <p class="muted" style="font-size:13px;margin-bottom:0">Du kannst das Fenster weiter benutzen oder weitere Aufnahmen hinzufügen. Sie werden nacheinander ausgewertet.</p>
+  </div>`;
+}
+
+function spName(m, id) { const s = (m.speakers || []).find(x => x.id === id); return s ? s.name : `Person ${id + 1}`; }
+function refBtn(r) { return r >= 0 ? `<button class="ref" onclick="jump(${r})" title="Zur Stelle im Transkript">▶ ${fmtTime(M.segments[r] ? M.segments[r].a : 0)}</button>` : ""; }
+
+function renderResult(m) {
+  const files = m.files || {};
+  const s = m.summary || {};
+  let content = "";
+  if (tab === "protokoll") {
+    if (m.mode === "WORT") content = transcriptHtml(m);
+    else {
+      content = `<div class="doc">
+        <h3>Zusammenfassung</h3><p>${esc(s.overview || "–")}</p>
+        <h3>Besprochene Themen</h3>${(s.topics || []).map(t => `<b>${esc(t.title)}</b><ul>${t.points.map((p, i) => `<li>${esc(p)}${refBtn((t.refs || [])[i] ?? -1)}</li>`).join("")}</ul>`).join("") || "<p>Keine</p>"}
+        <h3>Beschlüsse</h3>${(s.decisions || []).length ? `<ol>${s.decisions.map((d, i) => `<li>${esc(d)}${refBtn((s.decisionRefs || [])[i] ?? -1)}</li>`).join("")}</ol>` : "<p>Keine</p>"}
+        <h3>Offene Punkte</h3>${(s.openPoints || []).length ? `<ul>${s.openPoints.map((d, i) => `<li>${esc(d)}${refBtn((s.openPointRefs || [])[i] ?? -1)}</li>`).join("")}</ul>` : "<p>Keine</p>"}
+        ${followHtml(m)}</div>`;
+    }
+  } else if (tab === "aufgaben") content = tasksHtml(m);
+  else if (tab === "transkript") content = transcriptHtml(m);
+  else if (tab === "personen") content = peopleHtml(m);
+  return `<div class="card" style="padding:14px 16px">
+    <div class="row">
+      <button class="btn primary" onclick="openFile('docx')" ${files.docx ? "" : "disabled"}>📝 Word öffnen</button>
+      <button class="btn" onclick="openFile('pdf')" ${files.pdf ? "" : "disabled"}>📄 PDF öffnen</button>
+      <button class="btn" onclick="openFile('folder')">📁 Ordner</button>
+      <span class="spacer"></span>
+      <button class="btn" onclick="backToPhone()">📱 Zurück aufs Handy</button>
+      <button class="btn ghost small" onclick="regenerate()" title="Protokoll mit anderer Vorlage oder neu erstellen">↻ Neu erstellen</button>
+    </div>
+    ${m.hasAudio ? `<audio id="player" controls preload="none" style="width:100%;margin-top:12px"></audio>` : ""}
+  </div>
+  <div class="tabs">${[["protokoll", m.mode === "WORT" ? "Wortprotokoll" : "Protokoll"], ["aufgaben", `Aufgaben (${(m.tasks || []).length})`], ["transkript", "Transkript"], ["personen", "Personen"]]
+    .map(([k, l]) => `<button class="${tab === k ? "on" : ""}" onclick="tab='${k}';render()">${l}</button>`).join("")}</div>
+  <div class="card" style="margin-top:0;border-top-left-radius:0;border-top-right-radius:0">${content}</div>`;
+}
+
+function followHtml(m) {
+  const f = (m.followUps || []).filter(x => x.text);
+  if (!f.length) return "";
+  return `<h3>Stand offener Aufgaben aus früheren Besprechungen</h3><ul>${f.map(x => `<li>${esc(x.text)} <span class="chip ${x.done ? "ok" : ""}">${x.done ? "erledigt" : "offen"}</span></li>`).join("")}</ul>`;
+}
+
+function tasksHtml(m) {
+  if (!(m.tasks || []).length) return `<div class="empty">Keine Aufgaben erkannt.</div>`;
+  return `<table class="tasks"><tr><th style="width:36px"></th><th>Aufgabe</th><th style="width:22%">Verantwortlich</th><th style="width:18%">Frist</th></tr>
+    ${m.tasks.map(t => `<tr class="${t.done ? "done" : ""}"><td><input type="checkbox" ${t.done ? "checked" : ""} onchange="toggleTask('${t.id}',this.checked)"></td>
+      <td>${esc(t.text)}${refBtn(t.ref)}</td><td>${esc(t.owner)}</td><td>${esc(t.due)}</td></tr>`).join("")}</table>`;
+}
+
+function transcriptHtml(m) {
+  if (!(m.segments || []).length) return `<div class="empty">Kein Transkript vorhanden.</div>`;
+  return m.segments.map((s, i) => `<div class="utt" id="seg${i}" onclick="seek(${s.a})"><div class="who"><span class="sp" style="background:${COLORS[s.s % 8]}"></span>${esc(spName(m, s.s))}<small>${fmtTime(s.a)}</small></div><div>${esc(s.t)}</div></div>`).join("");
+}
+
+function peopleHtml(m) {
+  return `<p class="muted" style="margin-top:0">Gib den erkannten Personen Namen. Protokoll, Aufgaben, Word und PDF werden sofort angepasst.</p>
+    ${(m.speakers || []).map(s => {
+      const first = m.segments.find(x => x.s === s.id);
+      return `<div class="row" style="margin:10px 0"><span class="sp" style="background:${COLORS[s.id % 8]}"></span>
+        <input type="text" style="max-width:260px" id="sp${s.id}" value="${esc(s.name)}" onfocus="editing=true" onblur="editing=false">
+        ${first ? `<button class="btn small" onclick="seek(${first.a})">▶ anhören</button><span class="muted" style="flex:1;min-width:200px;font-size:13px">„${esc(first.t.slice(0, 110))}${first.t.length > 110 ? "…" : ""}“</span>` : ""}</div>`;
+    }).join("")}
+    <button class="btn primary" onclick="saveSpeakers()">Namen übernehmen</button>`;
+}
+
+// ------------------------------------------------------------------ Aktionen
+async function refresh() {
+  try {
+    S = await api("/api/state");
+    if (S.focus && S.focus !== lastFocus) { lastFocus = S.focus; }
+    if (S.recorder.active) { sel = S.recorder.meetingId; }
+    if (sel && !S.meetings.find(m => m.id === sel)) { sel = null; M = null; }
+    if (sel) {
+      const b = S.meetings.find(m => m.id === sel);
+      if (!M || M.id !== sel || BUSY.includes(b.status) || b.status !== M.brief.status) M = await api(`/api/meeting/${sel}`);
+    }
+    if (!S.recorder.active && $("#recview")) { $("#main").innerHTML = ""; lastMain = ""; }
+    render();
+  } catch (e) { console.error(e); }
+}
+async function select(id) { if (S.recorder.active) return; sel = id; tab = "protokoll"; M = await api(`/api/meeting/${id}`); render(); }
+function pickFile() { $("#file").value = ""; $("#file").click(); }
+$("#file").addEventListener("change", e => { if (e.target.files[0]) upload(e.target.files[0]); });
+
+function upload(file) {
+  uploading = {name: file.name, f: 0}; sel = null; M = null; render();
+  const x = new XMLHttpRequest();
+  x.open("POST", `/api/upload?name=${encodeURIComponent(file.name)}&mtime=${file.lastModified || 0}`);
+  x.setRequestHeader("X-Token", TOKEN);
+  x.upload.onprogress = e => { if (e.lengthComputable) { uploading.f = e.loaded / e.total; if (!sel) renderHome(); } };
+  x.onload = async () => {
+    uploading = null;
+    const j = JSON.parse(x.responseText || "{}");
+    if (x.status !== 200) { toast(j.error || "Die Datei konnte nicht übernommen werden."); return refresh(); }
+    await refresh(); await select(j.id);
+    toast(j.done ? "Fertiges Protokoll übernommen." : "Übernommen. Jetzt Vorlage wählen und „Protokoll erstellen“.");
+  };
+  x.onerror = () => { uploading = null; toast("Übertragung fehlgeschlagen."); };
+  x.send(file);
+}
+async function importPath(p) {
+  try { const j = await api("/api/import-path", {path: decodeURIComponent(p)}); await refresh(); await select(j.id);
+    toast(j.done ? "Fertiges Protokoll übernommen." : "Aufnahme vom Handy übernommen."); } catch (e) { toast(e.message); }
+}
+async function dismiss(p) { await api("/api/dismiss", {path: decodeURIComponent(p)}); refresh(); }
+async function download(id) { await api("/api/models/download", {set: id}); refresh(); }
+
+async function startRecording() {
+  if (S.recorder.active) return;
+  try { const j = await api("/api/record/start", {}); sel = j.id; await refresh(); }
+  catch (e) { toast(e.message, 6000); }
+}
+async function pauseRec() { await api("/api/record/pause", {paused: !S.recorder.paused}); refresh(); }
+async function stopRec() {
+  const title = ($("#recTitle") || {}).value || "";
+  const j = await api("/api/record/stop", {});
+  if (j.id) {
+    if (title.trim()) await api(`/api/meeting/${j.id}/update`, {title});
+    $("#main").innerHTML = ""; lastMain = ""; sel = j.id; M = null; await refresh();
+    if (S.models.ready && j.seconds) { cfg = {}; setupForm(M); }
+  }
+}
+async function processNow() {
+  const agenda = cfg.agenda.split("\n").map(s => s.trim()).filter(Boolean);
+  await api("/api/process", {id: M.id, title: cfg.title, mode: cfg.mode, template: cfg.template, expectedSpeakers: cfg.speakers,
+    agenda, location: cfg.location, chair: cfg.chair, minuteTaker: cfg.minuteTaker});
+  M = null; refresh();
+}
+function regenerate() {
+  modal(`<h2>Protokoll neu erstellen</h2><p class="muted">Wähle eine andere Vorlage oder Protokollart. Das Transkript bleibt erhalten, nur das Protokoll wird neu geschrieben.</p>
+    <div class="field"><label>Art</label><select id="rgMode">${S.modes.map(x => `<option value="${x.id}" ${M.mode === x.id ? "selected" : ""}>${x.label}</option>`).join("")}</select></div>
+    <div class="field"><label>Vorlage</label><select id="rgTpl">${S.templates.map(x => `<option value="${x.id}" ${M.template === x.id ? "selected" : ""}>${x.label} – ${x.description}</option>`).join("")}</select></div>
+    <label class="row" style="margin-bottom:16px"><input type="checkbox" id="rgFull"> Auch Sprecher und Transkript neu erkennen</label>
+    <div class="row"><span class="spacer"></span><button class="btn" onclick="closeModal()">Abbrechen</button>
+    <button class="btn primary" onclick="doRegenerate()">Neu erstellen</button></div>`);
+}
+async function doRegenerate() {
+  await api("/api/process", {id: M.id, mode: $("#rgMode").value, template: $("#rgTpl").value, summaryOnly: !$("#rgFull").checked});
+  closeModal(); M = null; refresh();
+}
+async function openFile(kind) { await api("/api/open", {id: M.id, kind}); }
+async function toggleTask(id, done) { await api(`/api/meeting/${M.id}/update`, {taskDone: {[id]: done}}); M = await api(`/api/meeting/${M.id}`); render(); }
+async function saveSpeakers() {
+  const speakers = M.speakers.map(s => ({id: s.id, name: ($("#sp" + s.id) || {}).value || s.name}));
+  editing = false;
+  await api(`/api/meeting/${M.id}/update`, {speakers}); M = await api(`/api/meeting/${M.id}`); render(); toast("Namen übernommen, Word und PDF aktualisiert.");
+}
+async function renameTitle(el) {
+  const t = el.textContent.trim();
+  if (t && t !== M.title) { await api(`/api/meeting/${M.id}/update`, {title: t}); M = await api(`/api/meeting/${M.id}`); toast("Titel geändert."); refresh(); }
+}
+function delMeeting() {
+  modal(`<h2>Besprechung löschen?</h2><p>„${esc(M.title)}“ wird mit Aufnahme und Transkript von diesem PC gelöscht. Bereits gespeicherte Word- und PDF-Dateien im Ordner „Protokoll KI“ bleiben erhalten.</p>
+    <div class="row"><span class="spacer"></span><button class="btn" onclick="closeModal()">Abbrechen</button>
+    <button class="btn" style="background:var(--rec);border-color:var(--rec);color:#fff" onclick="doDelete()">Löschen</button></div>`);
+}
+async function doDelete() { await api(`/api/meeting/${M.id}/delete`, {}); closeModal(); sel = null; M = null; refresh(); }
+function seek(t) { const p = $("#player"); if (!p) return; if (!p.src) p.src = `/api/audio/${M.id}?t=${TOKEN}`; p.currentTime = t; p.play(); }
+function jump(i) { tab = "transkript"; render(); const e = $("#seg" + i); if (e) { e.scrollIntoView({block: "center"}); e.style.background = "#ECEBFF"; } if (M.segments[i]) seek(M.segments[i].a); }
+
+function modal(html) { $("#modalBox").innerHTML = html; $("#modal").classList.add("on"); }
+function closeModal() { $("#modal").classList.remove("on"); }
+$("#modal").addEventListener("click", e => { if (e.target.id === "modal") closeModal(); });
+
+function phoneHelp() {
+  modal(`<h2>Aufnahme vom Handy auf den PC</h2>
+    <p>In der App Protokoll KI die Besprechung öffnen, oben auf <b>⋮</b> und dann <b>„Am PC auswerten“</b> tippen.</p>
+    <h3 style="font-size:15px">Weg 1: Quick Share (ohne Kabel)</h3>
+    <ol><li>„Teilen“ wählen, dann <b>Quick Share</b> und diesen PC.</li>
+    <li>Die Datei landet im Download-Ordner. Protokoll KI bemerkt sie von selbst und fragt „Übernehmen?“.</li></ol>
+    <p class="muted" style="font-size:13px">Quick Share für Windows gibt es kostenlos von Samsung bzw. Google. Die Übertragung läuft direkt zwischen Handy und PC.</p>
+    <h3 style="font-size:15px">Weg 2: USB-Kabel</h3>
+    <ol><li>In der App „Auf dem Handy speichern“ wählen (Ordner „Download“).</li>
+    <li>Handy per Kabel anschließen, am Handy „Dateien übertragen“ erlauben.</li>
+    <li>Im Explorer das Handy öffnen, Ordner „Download“, die <b>.protokoll</b>-Datei in dieses Fenster ziehen.</li></ol>
+    <div class="row"><span class="spacer"></span><button class="btn" onclick="api('/api/open',{kind:'downloads'})">Download-Ordner öffnen</button><button class="btn primary" onclick="closeModal()">Verstanden</button></div>`);
+}
+async function backToPhone() {
+  modal(`<h2>Protokoll zurück aufs Handy</h2>
+    <p>Protokoll KI hat dafür die Datei <b>„… (fürs Handy).protokoll“</b> im Ergebnisordner abgelegt. Sie enthält Protokoll, Aufgaben, Transkript und Aufnahme.</p>
+    <ol><li><b>Quick Share:</b> Datei mit der rechten Maustaste anklicken, „Quick Share“ bzw. „Senden an“ wählen, dann das Handy.</li>
+    <li><b>USB-Kabel:</b> Datei in den Ordner „Download“ des Handys ziehen.</li>
+    <li>In der App unten auf <b>„Importieren“</b> tippen und die Datei wählen, oder die Datei im Handy einfach öffnen.</li></ol>
+    <div class="row"><span class="spacer"></span><button class="btn" onclick="closeModal()">Schließen</button>
+    <button class="btn primary" onclick="openFile('phone')">Datei im Explorer zeigen</button></div>`);
+}
+
+async function openSettings() {
+  const st = S.settings, md = S.models;
+  modal(`<h2>Einstellungen</h2>
+    <div class="field"><label>KI-Qualität</label>
+      ${md.sets.map(x => `<div class="setrow ${md.active === x.id ? "on" : ""}"><div style="flex:1"><b>${esc(x.label)}</b>${x.id === md.recommended ? ' <span class="chip">empfohlen</span>' : ""}<br><span class="muted" style="font-size:13px">${esc(x.description)} · ${gb(x.bytes)}</span></div>
+        ${x.installed ? (md.active === x.id ? `<span class="chip ok">aktiv</span>` : `<button class="btn small" onclick="useSet('${x.id}')">Verwenden</button>`) :
+          `<button class="btn small" onclick="download('${x.id}');closeModal()" ${md.download.running ? "disabled" : ""}>Laden</button>`}</div>`).join("")}</div>
+    <div class="field"><label>Eigene Fachbegriffe und Namen</label><textarea id="stVocab" placeholder="Ein Begriff pro Zeile, z. B. Meier-Lüdenscheidt, SGB XI">${esc(st.vocabulary.join("\n"))}</textarea>
+      <span class="hint">Werden in Transkript und Protokoll richtig geschrieben. Begriffe aus der Handy-App kommen automatisch mit.</span></div>
+    <div class="grid2">
+      <div class="field"><label>Einrichtung</label><input type="text" id="stOrg" value="${esc(st.organization)}" placeholder="erscheint in formalen Protokollen"></div>
+      <div class="field"><label>Standard-Vorlage</label><select id="stTpl">${S.templates.map(x => `<option value="${x.id}" ${st.defaultTemplate === x.id ? "selected" : ""}>${x.label}</option>`).join("")}</select></div>
+    </div>
+    <label class="row" style="margin:6px 0"><input type="checkbox" id="stTrack" ${st.trackTasks ? "checked" : ""}> Offene Aufgaben früherer Besprechungen abgleichen</label>
+    <label class="row" style="margin:6px 0 16px"><input type="checkbox" id="stWatch" ${st.watchDownloads ? "checked" : ""}> Download-Ordner auf Aufnahmen vom Handy prüfen</label>
+    <p class="muted" style="font-size:13px">Ergebnisse: ${esc(S.outputDir)} · Version ${esc(S.version)}<br>Protokoll KI nutzt das Internet nur für das einmalige Laden der KI. Aufnahmen und Protokolle verlassen den PC nie.</p>
+    <div class="row"><button class="btn small" onclick="api('/api/open',{kind:'outputDir'})">Ergebnisordner öffnen</button><span class="spacer"></span>
+    <button class="btn" onclick="closeModal()">Abbrechen</button><button class="btn primary" onclick="saveSettings()">Speichern</button></div>`);
+}
+async function useSet(id) { await api("/api/models/use", {set: id}); await refresh(); openSettings(); }
+async function saveSettings() {
+  await api("/api/settings", {vocabulary: $("#stVocab").value.split("\n"), organization: $("#stOrg").value, defaultTemplate: $("#stTpl").value,
+    trackTasks: $("#stTrack").checked, watchDownloads: $("#stWatch").checked});
+  closeModal(); toast("Gespeichert."); refresh();
+}
+
+// Ziehen und Ablegen überall im Fenster
+let dragDepth = 0;
+window.addEventListener("dragenter", e => { if ([...(e.dataTransfer.types || [])].includes("Files")) { dragDepth++; $("#overlay").classList.add("on"); } e.preventDefault(); });
+window.addEventListener("dragleave", e => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $("#overlay").classList.remove("on"); });
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; $("#overlay").classList.remove("on");
+  const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) { if (S.recorder.active) return toast("Bitte zuerst die Aufnahme beenden."); upload(f); } });
+
+refresh();
+setInterval(() => { if (!$("#modal").classList.contains("on")) refresh(); else api("/api/state").then(x => S = x).catch(() => {}); }, 1000);
+setInterval(() => { if (S && S.recorder.active) api("/api/state").then(x => { S = x; renderRecording(); }).catch(() => {}); }, 150);
+</script>
+</body>
+</html>

@@ -10,3 +10,10 @@ captures/
 .DS_Store
 build-host/
 __pycache__/
+
+# PC-Programm
+pc/build/
+pc/dist/
+pc/dl/
+__pycache__/
+*.pyc

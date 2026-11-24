@@ -121,6 +121,12 @@ fun AppNavigation(
         importing = true
         scope.launch {
             try {
+                // Austauschdatei vom PC-Programm (fertiges Protokoll oder Aufnahme vom PC)
+                if (de.protokollki.transfer.PcTransfer.isPackage(context, uri)) {
+                    val meeting = de.protokollki.transfer.PcTransfer.import(context, uri)
+                    nav.navigate(Routes.meeting(meeting.id)) { launchSingleTop = true }
+                    return@launch
+                }
                 val isDoc = runCatching { ProtocolImporter.isDocument(context, uri) }.getOrDefault(false)
                 val defaultTemplate = AppSettings.state.value.defaultTemplate
                 if (isDoc) {

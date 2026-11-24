@@ -193,7 +193,8 @@ fun HomeScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri -> if (uri != null) onImport(uri) }
     val startImport: () -> Unit = {
-        importLauncher.launch(arrayOf("audio/*", "video/*") + ProtocolImporter.MIME_TYPES)
+        importLauncher.launch(arrayOf("audio/*", "video/*") + ProtocolImporter.MIME_TYPES +
+            arrayOf("application/octet-stream", "application/zip"))   // .protokoll vom PC
     }
 
     val groups = remember(meetings) { meetings.groupBy { dayKey(it.createdAt) } }
