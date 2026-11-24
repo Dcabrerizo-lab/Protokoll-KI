@@ -1,0 +1,41 @@
+name: Modelldateien entpackt bereitstellen
+
+# Die App lädt die Spracherkennung direkt als einzelne Dateien (kein Entpacken auf dem Handy).
+# Dieser Ablauf entpackt die Archive von k2-fsa/sherpa-onnx einmalig und legt die Dateien
+# im Release "models-v1" ab. Lizenzen: Whisper (MIT), sherpa-onnx/pyannote-Export (Apache-2.0/MIT).
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [".github/workflows/models-mirror.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Herunterladen und entpacken
+        run: |
+          set -e
+          GH=https://github.com/k2-fsa/sherpa-onnx/releases/download
+          C="curl -fsSL --retry 6 --retry-all-errors --retry-delay 10"
+          mkdir -p out tmp && cd tmp
+          for W in turbo small base; do
+            $C $GH/asr-models/sherpa-onnx-whisper-$W.tar.bz2 | tar xj
+            cp sherpa-onnx-whisper-$W/$W-encoder.int8.onnx sherpa-onnx-whisper-$W/$W-decoder.int8.onnx sherpa-onnx-whisper-$W/$W-tokens.txt ../out/
+            rm -rf sherpa-onnx-whisper-$W
+          done
+          $C $GH/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2 | tar xj
+          cp sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx ../out/pyannote-segmentation-3-0.int8.onnx
+          cd ../out && ls -l && sha256sum * > SHA256SUMS
+      - name: Release models-v1 anlegen oder ergänzen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release view models-v1 >/dev/null 2>&1 || gh release create models-v1 --latest=false \
+            --title "Modelldateien (entpackt)" \
+            --notes "Entpackte Modelldateien für den direkten Download in der App. Quelle: k2-fsa/sherpa-onnx (Whisper: MIT)."
+          gh release upload models-v1 out/* --clobber
