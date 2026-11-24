@@ -3,7 +3,7 @@
 
 Eingabe: JSON von `gcloud firebase test android models list --format=json`, Auswahl
 (standard | s23 | alle). Ausgabe: JSON-Liste für die GitHub-Matrix:
-[{"name": "Galaxy S23+", "model": "dm2q", "version": "34", "set": "premium"}, ...]
+["samsung Galaxy S23+|dm2q|34|premium", ...]
 
 Jeder Eintrag ist ein Gerätetest. Im kostenlosen Spark-Tarif sind 5 pro Tag frei, daher
 nimmt "standard" nur 3 Handys (2 bleiben für Wiederholungen übrig).
@@ -52,4 +52,6 @@ for g in plan:
 
 for d in out:
     print(f'Gewählt: {d["name"]} ({d["model"]}, Android-API {d["version"]}, Paket {d["set"]})', file=sys.stderr)
-print(json.dumps(out))
+# Als Liste einfacher Texte "Name|Modell|Version|Paket": GitHub verschluckt Job-Ausgaben mit
+# geschweiften Klammern, weil das JSON-Secret solche Zeilen enthält (Maskierung).
+print(json.dumps([f'{d["name"]}|{d["model"]}|{d["version"]}|{d["set"]}' for d in out]))
