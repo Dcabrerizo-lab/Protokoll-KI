@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import os
 import re
 import shutil
@@ -36,6 +37,24 @@ def server_binary() -> Path | None:
     return Path(found) if found else None
 
 
+def server_env(binary: Path) -> dict:
+    env = dict(os.environ)
+    if sys.platform.startswith("linux"):
+        env["LD_LIBRARY_PATH"] = str(binary.parent) + os.pathsep + env.get("LD_LIBRARY_PATH", "")
+    return env
+
+
+FAST = ["-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0"]   # Flash Attention + kleiner Zwischenspeicher
+
+
+def attempts(on_gpu: bool) -> list[list[str]]:
+    """Startvarianten, schnellste zuerst; wenn eine nicht startet, kommt die nächste."""
+    gpu = [["-ngl", "999", *FAST], ["-ngl", "999"]]
+    # ohne passende Grafikkarte: nur Prozessor (auch keine Teil-Auslagerung auf Onboard-Grafik)
+    cpu = [["-ngl", "0", "-dev", "none", *FAST], ["-ngl", "0", *FAST], ["-ngl", "0"]]
+    return gpu + cpu if on_gpu else cpu
+
+
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind((HOST, 0))
@@ -54,26 +73,38 @@ class LocalLlm:
         binary = server_binary()
         if binary is None:
             raise LlmError("Die KI-Komponente (llama-server) fehlt. Bitte Protokoll KI neu installieren.")
-        threads = max(1, min(16, (os.cpu_count() or 4) - 1))
-        attempts = [["-ngl", "999"], ["-ngl", "0"]]
-        if os.environ.get("PK_CPU_ONLY") == "1":
-            attempts = [["-ngl", "0"]]
+        from . import hardware
+        hw = hardware.info()
+        t_gen, t_batch = hardware.llm_threads(hw)
+        if sys.platform != "win32":
+            try:
+                binary.chmod(binary.stat().st_mode | 0o111)
+            except OSError:
+                pass
+        env = server_env(binary)
+        on_gpu = os.environ.get("PK_CPU_ONLY") != "1" and hardware.gpu_fits(
+            hw, model_path.stat().st_size if model_path.exists() else 0, context)
+        self.on_gpu = False
         last_log = ""
-        for extra in attempts:
+        for extra in attempts(on_gpu):
             for ctx in ([context, 8192] if context > 8192 else [context]):
                 self.port = _free_port()
                 log_path = app_data() / "llama-server.log"
                 args = [str(binary), "-m", str(model_path), "-c", str(ctx), "--host", HOST,
-                        "--port", str(self.port), "-np", "1", "-t", str(threads), *extra]
+                        "--port", str(self.port), "-np", "1", "-t", str(t_gen), "-tb", str(t_batch), *extra]
                 flags = 0x08000000 if sys.platform == "win32" else 0   # CREATE_NO_WINDOW
                 with open(log_path, "wb") as log:
                     self._proc = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT,
                                                   stdin=subprocess.DEVNULL, creationflags=flags,
-                                                  cwd=str(binary.parent))
+                                                  cwd=str(binary.parent), env=env)
                 if on_status:
                     on_status("Lade Sprachmodell …")
                 if self._wait_ready(timeout=600):
                     self.context_size = ctx
+                    self.on_gpu = extra[1] != "0"
+                    self.settings = " ".join(extra)
+                    logging.info("Sprachmodell gestartet: %s, Kontext %d, Threads %d/%d",
+                                 self.settings, ctx, t_gen, t_batch)
                     self._read_props()
                     return
                 last_log = log_path.read_text("utf-8", errors="replace")[-1500:]

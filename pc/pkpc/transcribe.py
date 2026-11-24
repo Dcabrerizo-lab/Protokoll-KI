@@ -15,7 +15,8 @@ RATE = 16000
 
 
 def _threads() -> int:
-    return max(1, min(8, (os.cpu_count() or 4) - 1))
+    from . import hardware
+    return hardware.asr_threads(hardware.info())
 
 
 @dataclass

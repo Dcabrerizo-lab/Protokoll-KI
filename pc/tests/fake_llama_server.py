@@ -5,6 +5,9 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 args = sys.argv[1:]
+if "--list-devices" in args:
+    print("Available devices:\n  Vulkan0: Fake GPU 9000 (8192 MiB, 8000 MiB free)")
+    sys.exit(0)
 port = int(args[args.index("--port") + 1])
 ctx = int(args[args.index("-c") + 1])
 

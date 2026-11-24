@@ -76,12 +76,12 @@ def whisper_files(prefix: str) -> list[ModelFile]:
 
 SETS = [
     ModelSet("ultra", "Höchste Qualität",
-             "Whisper large-v3-turbo und Qwen3 8B. Für PCs ab 16 GB Arbeitsspeicher.", 13.0, "turbo",
+             "Whisper large-v3-turbo und Qwen3 8B. Für PCs mit eigener Grafikkarte (ab 8 GB).", 13.0, "turbo",
              ModelFile("Qwen3-8B-Q4_K_M.gguf",
                        [f"{HF}/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf"], 5_027_783_488),
              16384, no_think=True),
     ModelSet("premium", "Sehr gute Qualität",
-             "Whisper large-v3-turbo und Qwen3 4B. Für PCs mit 8 GB Arbeitsspeicher.", 6.5, "turbo",
+             "Whisper large-v3-turbo und Qwen3 4B. Schnell und sehr genau, für PCs ab 8 GB Arbeitsspeicher.", 6.5, "turbo",
              ModelFile("Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
                        [f"{HF}/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"],
                        2_497_280_000), 16384),
@@ -131,8 +131,8 @@ def recommended() -> ModelSet:
     forced = by_id(os.environ.get("PK_MODEL_SET"))
     if forced:
         return forced
-    ram = total_ram_gb()
-    return next(s for s in SETS if ram >= s.min_ram_gb)
+    from . import hardware
+    return by_id(hardware.choose_set_id(hardware.info())) or SETS[1]
 
 
 def path(name: str) -> Path:
