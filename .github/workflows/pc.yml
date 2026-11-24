@@ -211,7 +211,8 @@ jobs:
           assert "meetings" in s and s["platform"].startswith("linux")
           print("Erkannt:", s["models"]["hardware"], "->", s["models"]["recommended"])
           c.request("GET", "/api/devices", headers={"X-Token": info["token"]}); print("Mikrofone:", c.getresponse().read()[:200])
-          c.request("GET", "/api/state"); assert c.getresponse().status == 403   # ohne Schlüssel kein Zugriff
+          c.request("GET", "/api/state"); r = c.getresponse(); r.read(); assert r.status == 403   # ohne Schlüssel kein Zugriff
+          c.close(); c = http.client.HTTPConnection("127.0.0.1", info["port"], timeout=10)
           c.request("POST", "/api/quit", body="{}", headers={"X-Token": info["token"], "Content-Type": "application/json"}); c.getresponse().read()
           print("Oberfläche OK, Version", s["version"])
           EOF
