@@ -133,7 +133,19 @@ Java_de_protokollki_engine_LlamaNative_load(JNIEnv *env, jobject, jstring jpath,
     cp.n_threads = threads;
     cp.n_threads_batch = threads;
     cp.no_perf = true;
+    // Speicher sparen: KV-Cache in 8 Bit (halbiert den größten RAM-Posten nach den Gewichten).
+    // Quantisierter V-Cache braucht Flash Attention; klappt das nicht, Rückfall auf 16 Bit.
+    cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+    cp.type_k = GGML_TYPE_Q8_0;
+    cp.type_v = GGML_TYPE_Q8_0;
     e->ctx = llama_init_from_model(e->model, cp);
+    if (!e->ctx) {
+        LOGE("Kontext mit 8-Bit-KV nicht möglich, versuche 16 Bit");
+        cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
+        cp.type_k = GGML_TYPE_F16;
+        cp.type_v = GGML_TYPE_F16;
+        e->ctx = llama_init_from_model(e->model, cp);
+    }
     if (!e->ctx) {
         LOGE("Kontext konnte nicht erzeugt werden");
         llama_model_free(e->model);

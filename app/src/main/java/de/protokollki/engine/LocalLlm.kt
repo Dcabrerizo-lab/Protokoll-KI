@@ -50,13 +50,40 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
     init {
         LlamaNative.ensureInit(context)
         val path = ModelManager.file(set.llm.target).absolutePath
-        handle = LlamaNative.load(path, set.llmContext, 0)
+        val ctx = contextFor(context, set, java.io.File(path).length())
+        android.util.Log.i("ProtokollKI", "Lade Sprachmodell ${set.id} mit Kontext $ctx")
+        // Freigegebene Spracherkennung und Audio wirklich zurückgeben, bevor mehrere GB geladen werden
+        System.gc()
+        var h = LlamaNative.load(path, ctx, 0)
+        if (h == 0L && ctx > 4096) h = LlamaNative.load(path, 4096, 0)
+        handle = h
         if (handle == 0L) throw LlmException(
             "Das Sprachmodell konnte nicht geladen werden. Eventuell ist zu wenig Arbeitsspeicher frei. " +
                 "Bitte andere Apps schließen oder in den Einstellungen ein kleineres Modellpaket wählen.")
     }
 
     val contextSize: Int get() = LlamaNative.contextSize(handle)
+
+    companion object {
+        /**
+         * Kontextlänge passend zum freien Arbeitsspeicher. Android beendet Apps ohne Rückfrage, wenn
+         * sie zu viel RAM belegen; auf 8-GB-Handys (S23+) war 16k Kontext mit 4B-Modell zu viel.
+         * KV-Cache (8 Bit) bei Qwen3 4B/8B: ca. 75 KB je Token.
+         */
+        fun contextFor(context: Context, set: ModelSet, modelBytes: Long): Int {
+            val am = context.getSystemService(android.app.ActivityManager::class.java)
+            val mi = android.app.ActivityManager.MemoryInfo().also { am?.getMemoryInfo(it) }
+            val spare = mi.availMem - modelBytes - 800L * 1024 * 1024
+            val fit = when {
+                spare > 1200L * 1024 * 1024 -> 12288
+                spare > 600L * 1024 * 1024 -> 8192
+                else -> 4096
+            }
+            // Große Modelle nie über 8k: reicht für etwa eine Stunde Besprechung je Abschnitt
+            val cap = if (set.llm.bytes > 2_000_000_000L) 8192 else set.llmContext
+            return minOf(set.llmContext, cap, fit)
+        }
+    }
 
     fun countTokens(text: String) = LlamaNative.countTokens(handle, text)
 
