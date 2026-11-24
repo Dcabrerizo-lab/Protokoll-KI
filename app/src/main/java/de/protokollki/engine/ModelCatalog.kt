@@ -9,6 +9,12 @@ data class ModelFile(
     val target: String,                 // Dateiname/Ordner unter models/
     val bytes: Long,                    // Download-Größe
     val extract: Map<String, String> = emptyMap(),  // Pfad im Archiv -> Zieldatei
+    /**
+     * Dieselben Zieldateien einzeln und entpackt (Release models-v1 dieses Projekts). Wird zuerst
+     * versucht: kein minutenlanges Entpacken auf dem Handy, und jede Datei lässt sich fortsetzen.
+     * Schlägt das fehl, wird das Archiv geladen und entpackt.
+     */
+    val direct: List<String> = emptyList(),
 )
 
 /** Ein Paket aus Spracherkennung + Sprachmodell, passend zur Geräteleistung. */
@@ -32,6 +38,7 @@ data class ModelSet(
 object ModelCatalog {
     private const val GH = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
     private const val HF = "https://huggingface.co"
+    const val MIRROR = "https://github.com/Dcabrerizo-lab/Protokoll-KI/releases/download/models-v1"
 
     const val SEGMENTATION = "pyannote-segmentation-3-0.int8.onnx"
     const val EMBEDDING = "wespeaker_en_voxceleb_resnet34_LM.onnx"
@@ -43,6 +50,7 @@ object ModelCatalog {
             target = "segmentation",
             bytes = 6_958_444,
             extract = mapOf("sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx" to SEGMENTATION),
+            direct = listOf(SEGMENTATION),
         ),
         ModelFile(
             url = "$GH/speaker-recongition-models/$EMBEDDING",
@@ -58,6 +66,7 @@ object ModelCatalog {
         extract = listOf("encoder.int8.onnx", "decoder.int8.onnx", "tokens.txt").associate {
             "sherpa-onnx-whisper-$name/$name-$it" to "$name-$it"
         },
+        direct = listOf("encoder.int8.onnx", "decoder.int8.onnx", "tokens.txt").map { "$name-$it" },
     )
 
     val sets = listOf(
