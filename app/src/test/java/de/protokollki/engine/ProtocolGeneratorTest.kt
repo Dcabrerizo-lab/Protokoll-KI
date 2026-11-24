@@ -195,4 +195,19 @@ class ProtocolGeneratorTest {
             "Herr Wagner Telefonanlage klären mit Anbieter"))
         assertEquals("Frau Becker", ProtocolGenerator.resolveOwner("Person 3", 1, segs, name, "Angebote einholen"))
     }
+
+    @Test
+    fun truncatedJsonIsRepaired() {
+        val raw = """{
+  "aufgaben": [
+    {"aufgabe": "Drei Angebote einholen [1]", "verantwortlich": "Frau Becker", "frist": "Freitag"},
+    {"aufgabe": "Telefonanlage klären", "verantwortlich": "Herr Wagner", "frist": "Ende Januar"},
+    {"aufgabe": "Bichtig, Braubecker können Sie bis Fre"""
+        val tasks = ProtocolGenerator.parseTasks(raw, 5)
+        assertEquals(listOf("Drei Angebote einholen", "Telefonanlage klären"), tasks.map { it.text })
+        assertEquals(1, tasks[0].ref)
+        val sum = ProtocolGenerator.parseSummary("""{"zusammenfassung": "Kurz.", "themen": [{"titel": "Umzug", "punkte": ["Einzug Februar"]}, {"titel": "To""", 5)
+        assertEquals("Kurz.", sum.overview)
+        assertEquals(listOf("Umzug"), sum.topics.map { it.title })
+    }
 }

@@ -127,7 +127,7 @@ class ProtocolGenerator(private val model: TextModel) {
 
         // Kleine Modelle lassen im kombinierten Durchgang manchmal die Aufgaben weg:
         // dann gezielt nachfassen (nur Aufgaben, je Abschnitt).
-        if (wantSummary && raws.none { parseTasks(it, segments.size).isNotEmpty() }) {
+        if (wantSummary && raws.none { r -> runCatching { parseTasks(r, segments.size) }.getOrDefault(emptyList()).isNotEmpty() }) {
             for (c in chunks) {
                 val label = "Prüfe Aufgaben …"
                 if (!progress.update(0.97f, label)) throw LlmException("Abgebrochen")
@@ -139,13 +139,13 @@ class ProtocolGenerator(private val model: TextModel) {
         val meetingDate = java.time.Instant.ofEpochMilli(dateMillis)
             .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
         val n = segments.size
-        val summary = if (wantSummary) parseSummary(raws.first(), n) else Summary()
-        val tasks = raws.flatMap { parseTasks(it, n) }
+        val summary = if (wantSummary) runCatching { parseSummary(raws.first(), n) }.getOrElse { Summary() } else Summary()
+        val tasks = raws.flatMap { r -> runCatching { parseTasks(r, n) }.getOrDefault(emptyList()) }
             .map { it.copy(due = DateResolver.resolve(it.due, meetingDate)) }
             .map { if (it.ref < 0) it.copy(ref = locateRef(it.text, segments)) else it }
             .map { it.copy(owner = resolveOwner(it.owner, it.ref, segments, ::nameOf, it.text)) }
         val doneKeys = mutableMapOf<String, Int>()
-        raws.forEach { r -> parseCompleted(r, n).forEach { (k, ref) -> doneKeys.putIfAbsent(k, ref) } }
+        raws.forEach { r -> runCatching { parseCompleted(r, n) }.getOrDefault(emptyList()).forEach { (k, ref) -> doneKeys.putIfAbsent(k, ref) } }
         val completed = openTasks.filter { it.key in doneKeys }
         val finalTasks = dedupe(tasks)
         val sensitive = (raws.flatMap { parseSensitive(it, participants) } +
@@ -363,8 +363,43 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
 
         private fun jsonObject(raw: String): JSONObject {
             val s = raw.indexOf('{'); val e = raw.lastIndexOf('}')
-            if (s < 0 || e <= s) throw LlmException("Ungültige Antwort des Sprachmodells")
-            return JSONObject(raw.substring(s, e + 1))
+            if (s >= 0 && e > s) runCatching { return JSONObject(raw.substring(s, e + 1)) }
+            // Abgeschnittene Antwort (Token-Grenze erreicht, Modell hat sich wiederholt): reparieren
+            if (s >= 0) repairJson(raw.substring(s))?.let { r -> runCatching { return JSONObject(r) } }
+            throw LlmException("Ungültige Antwort des Sprachmodells")
+        }
+
+        /**
+         * Schneidet eine abgebrochene JSON-Antwort hinter dem letzten vollständigen Element ab und
+         * schließt alle offenen Klammern. null, wenn nichts Brauchbares übrig bleibt.
+         */
+        internal fun repairJson(raw: String): String? {
+            val stack = ArrayDeque<Char>()
+            var inString = false; var escape = false
+            var cut = -1; var cutStack: List<Char> = emptyList()
+            for ((i, c) in raw.withIndex()) {
+                if (inString) {
+                    if (escape) escape = false
+                    else if (c == '\\') escape = true
+                    else if (c == '"') inString = false
+                    continue
+                }
+                when (c) {
+                    '"' -> inString = true
+                    '{', '[' -> stack.addLast(c)
+                    '}', ']' -> {
+                        if (stack.isEmpty()) break
+                        stack.removeLast()
+                        if (stack.isEmpty()) return raw.substring(0, i + 1)
+                        cut = i; cutStack = stack.toList()
+                    }
+                    ',' -> if (stack.isNotEmpty()) { cut = i - 1; cutStack = stack.toList() }
+                }
+            }
+            if (cut < 0) return null
+            val sb = StringBuilder(raw.substring(0, cut + 1).trimEnd().trimEnd(','))
+            for (open in cutStack.reversed()) sb.append(if (open == '{') '}' else ']')
+            return sb.toString()
         }
 
         fun parseSummary(raw: String, segmentCount: Int = Int.MAX_VALUE): Summary {
