@@ -47,19 +47,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -e
-          mkdir -p build/llama dl
-          TAG=$(gh release view -R ggml-org/llama.cpp --json tagName -q .tagName)
-          echo "llama.cpp $TAG"
-          gh release download "$TAG" -R ggml-org/llama.cpp -D dl -p "llama-*-bin-win-cpu-x64.zip"
-          gh release download "$TAG" -R ggml-org/llama.cpp -D dl -p "llama-*-bin-win-vulkan-x64.zip" || true
-          for z in dl/*cpu*.zip dl/*vulkan*.zip; do [ -f "$z" ] && unzip -o -q "$z" -d build/llama; done
-          # nur das Nötige behalten (Server + Bibliotheken)
-          find build/llama -type f ! -name "llama-server.exe" ! -name "*.dll" -delete
-          find build/llama -mindepth 2 -type f -exec mv -f {} build/llama/ \; 2>/dev/null || true
-          ls -la build/llama
+          python tools/get_llama.py build/llama
           ./build/llama/llama-server.exe --version || true
-          echo "$TAG" > build/llama/VERSION.txt
 
       - name: Programmsymbol
         working-directory: pc
