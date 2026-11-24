@@ -181,16 +181,18 @@ class ModelPipelineTest {
         assertEquals("Sprecher-IDs nicht fortlaufend ab 0", (0 until ids.size).toList(), ids.sorted())
 
         var lastDone = 0
+        var lastTotal = -1
         val t1 = SystemClock.elapsedRealtime()
         val segments = t.transcribe(samples, chunks) { done, total, partial ->
             assertTrue("Fortschritt rückwärts", done > lastDone && done <= total)
-            assertEquals(chunks.size, total)
-            assertTrue(partial.size <= done)
+            // Whisper meldet je Sprecherabschnitt, Parakeet je Zeitfenster (bis 25 s)
+            assertTrue("Gesamtzahl unplausibel: $total", total in 1..maxOf(chunks.size, (duration / 15).toInt() + 1))
+            lastTotal = total
             lastDone = done
             true
         }
         TestEnv.log("Whisper: ${segments.size} Beiträge in ${(SystemClock.elapsedRealtime() - t1) / 1000} s")
-        assertEquals("nicht alle Abschnitte verarbeitet", chunks.size, lastDone)
+        assertEquals("nicht alle Abschnitte verarbeitet", lastTotal, lastDone)
         assertTranscriptSane(segments, duration)
         val speakers = segments.map { it.speakerId }.distinct().size
         assertTrue("$speakers Sprecher im Transkript, erwartet 2–4", speakers in 2..4)
