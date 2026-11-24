@@ -27,6 +27,10 @@ jobs:
             cp sherpa-onnx-whisper-$W/$W-encoder.int8.onnx sherpa-onnx-whisper-$W/$W-decoder.int8.onnx sherpa-onnx-whisper-$W/$W-tokens.txt ../out/
             rm -rf sherpa-onnx-whisper-$W
           done
+          PK=sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
+          $C $GH/asr-models/$PK.tar.bz2 | tar xj
+          for f in encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt; do cp $PK/$f ../out/parakeet-$f; done
+          rm -rf $PK
           $C $GH/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2 | tar xj
           cp sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx ../out/pyannote-segmentation-3-0.int8.onnx
           cd ../out && ls -l && sha256sum * > SHA256SUMS

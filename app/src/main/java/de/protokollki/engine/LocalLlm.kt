@@ -111,7 +111,9 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
             if (crashedLastTime(context)) return 4096
             val am = context.getSystemService(android.app.ActivityManager::class.java)
             val mi = android.app.ActivityManager.MemoryInfo().also { am?.getMemoryInfo(it) }
-            val spare = mi.availMem - modelBytes - 800L * 1024 * 1024
+            // Gewichte sind eingeblendet (mmap) und zählen nicht fest: auf echten Handys (S23+, Pixel 8)
+            // blieben mit 8k-Kontext stets über 2 GB frei. Grundlage ist daher der freie RAM abzüglich Puffer.
+            val spare = mi.availMem - 800L * 1024 * 1024 - (if (modelBytes > 4_000_000_000L) modelBytes / 2 else 0L)
             val fit = when {
                 spare > 1200L * 1024 * 1024 -> 12288
                 spare > 600L * 1024 * 1024 -> 8192

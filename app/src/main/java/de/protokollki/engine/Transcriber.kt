@@ -8,6 +8,7 @@ import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarization
 import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationModelConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationPyannoteModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig
 import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
 import de.protokollki.data.Segment
@@ -131,6 +132,7 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
         chunks: List<Turn>,
         onProgress: (done: Int, total: Int, partial: List<Segment>) -> Boolean,
     ): List<Segment> {
+        if (set.whisperPrefix == "parakeet") return transcribeParakeet(samples, chunks, onProgress)
         val prefix = set.whisperPrefix
         val config = OfflineRecognizerConfig(
             modelConfig = OfflineModelConfig(
@@ -174,6 +176,62 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
                     }
                 }
                 if (!onProgress(i + 1, chunks.size, segments)) break
+            }
+        } finally {
+            recognizer.release()
+        }
+        return segments
+    }
+
+    /**
+     * Parakeet: verarbeitet die Aufnahme in Fenstern bis 25 s (an leisen Stellen geschnitten) und
+     * ordnet jedes Wort über seinen Zeitstempel dem Sprecher zu. [chunks] liefert die Sprecher-
+     * abschnitte (bereits nummeriert wie die Sprecherliste und die Stimmprofile).
+     */
+    private fun transcribeParakeet(
+        samples: FloatArray,
+        chunks: List<Turn>,
+        onProgress: (done: Int, total: Int, partial: List<Segment>) -> Boolean,
+    ): List<Segment> {
+        val config = OfflineRecognizerConfig(
+            modelConfig = OfflineModelConfig(
+                transducer = OfflineTransducerModelConfig(
+                    encoder = ModelManager.file("parakeet-encoder.int8.onnx").absolutePath,
+                    decoder = ModelManager.file("parakeet-decoder.int8.onnx").absolutePath,
+                    joiner = ModelManager.file("parakeet-joiner.int8.onnx").absolutePath,
+                ),
+                tokens = ModelManager.file("parakeet-tokens.txt").absolutePath,
+                numThreads = threads,
+                modelType = "nemo_transducer",
+            ),
+            decodingMethod = "greedy_search",
+        )
+        val totalSec = samples.size / sampleRate.toFloat()
+        // Nur Fenster mit Sprache (laut Sprechererkennung) verarbeiten
+        val windows = TokenAlign.windows(totalSec) { a, b -> quietestPoint(samples, a, b) }
+            .filter { (a, b) -> chunks.isEmpty() || chunks.any { it.end > a && it.start < b } }
+        val recognizer = OfflineRecognizer(config = config)
+        val words = mutableListOf<TokenAlign.Word>()
+        var segments: List<Segment> = emptyList()
+        try {
+            for ((i, w) in windows.withIndex()) {
+                val a = (w.first * sampleRate).toInt().coerceIn(0, samples.size)
+                val b = (w.second * sampleRate).toInt().coerceIn(a, samples.size)
+                if (b - a >= sampleRate / 4) {
+                    val stream = recognizer.createStream()
+                    try {
+                        stream.acceptWaveform(samples.copyOfRange(a, b), sampleRate)
+                        recognizer.decode(stream)
+                        val r = recognizer.getResult(stream)
+                        words += TokenAlign.words(r.tokens, r.timestamps, r.durations, w.first)
+                    } finally {
+                        stream.release()
+                    }
+                }
+                segments = TokenAlign.segments(words, chunks, renumber = false)
+                    .map { it.copy(text = TextCleanup.clean(it.text)) }
+                    .filter { it.text.isNotEmpty() }
+                if (!onProgress(i + 1, windows.size, segments)) break
             }
         } finally {
             recognizer.release()

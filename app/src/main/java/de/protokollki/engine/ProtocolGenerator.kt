@@ -85,7 +85,12 @@ class ProtocolGenerator(private val model: TextModel) {
         }.trimEnd()
 
         // Platz für Systemprompt, Anweisungen und Antwort freihalten
-        val reserve = 3000 + model.countTokens(header)
+        // Antwortlängen passend zum Kontext (bei 4k-Kontext sonst "Text zu lang")
+        val ctx = model.contextSize
+        val summaryMax = minOf(2600, ctx / 3)
+        val notesMax = minOf(1000, ctx / 5)
+        val tasksMax = minOf(1400, ctx / 4)
+        val reserve = summaryMax + 900 + model.countTokens(header)
         val budget = (model.contextSize - reserve).coerceAtLeast(1500)
         val chunks = chunk(lines, budget)
 
@@ -103,7 +108,7 @@ class ProtocolGenerator(private val model: TextModel) {
                     val label = "Fasse Abschnitt ${i + 1} von ${chunks.size} zusammen …"
                     if (!prog(label)) throw LlmException("Abgebrochen")
                     val n = model.complete(SYSTEM, NOTES_PROMPT.format(header, i + 1, chunks.size, c),
-                        1000, 0.2f, null, llmProgress { prog(label, it) })
+                        notesMax, 0.2f, null, llmProgress { prog(label, it) })
                     step++
                     "Notizen zu Teil ${i + 1}:\n$n"
                 }.joinToString("\n\n")
@@ -111,8 +116,15 @@ class ProtocolGenerator(private val model: TextModel) {
             // Ein Durchgang für Protokoll UND Aufgaben (halbiert die Rechenzeit)
             val label = "Schreibe Protokoll und Aufgaben …"
             if (!prog(label)) throw LlmException("Abgebrochen")
-            raws += model.complete(SYSTEM, SUMMARY_PROMPT.format(header, extras, material),
-                2600, 0.2f, SUMMARY_GRAMMAR, llmProgress { prog(label, it) })
+            // Notizen vieler Abschnitte können zusammen zu lang werden: dann gleichmäßig kürzen
+            var fitted = material
+            for (attempt in 0 until 12) {
+                val tokens = model.countTokens(SYSTEM) + model.countTokens(SUMMARY_PROMPT.format(header, extras, fitted))
+                if (tokens + summaryMax + 64 <= ctx) break
+                fitted = shortenEvenly(fitted, 0.8)
+            }
+            raws += model.complete(SYSTEM, SUMMARY_PROMPT.format(header, extras, fitted),
+                summaryMax, 0.2f, SUMMARY_GRAMMAR, llmProgress { prog(label, it) })
             step++
         } else {
             for ((i, c) in chunks.withIndex()) {
@@ -120,7 +132,7 @@ class ProtocolGenerator(private val model: TextModel) {
                 else "Ermittle Aufgaben …"
                 if (!prog(label)) throw LlmException("Abgebrochen")
                 raws += model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c),
-                    1400, 0.0f, TASKS_GRAMMAR, llmProgress { prog(label, it) })
+                    tasksMax, 0.0f, TASKS_GRAMMAR, llmProgress { prog(label, it) })
                 step++
             }
         }
@@ -132,7 +144,7 @@ class ProtocolGenerator(private val model: TextModel) {
                 val label = "Prüfe Aufgaben …"
                 if (!progress.update(0.97f, label)) throw LlmException("Abgebrochen")
                 raws += model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c),
-                    1400, 0.0f, TASKS_GRAMMAR, null)
+                    tasksMax, 0.0f, TASKS_GRAMMAR, null)
             }
         }
 
@@ -319,6 +331,14 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
             }
             return owner
         }
+
+        /** Kürzt jeden Absatz (durch Leerzeile getrennt) auf [factor] seiner Länge, an Zeilengrenzen. */
+        internal fun shortenEvenly(text: String, factor: Double): String =
+            text.split("\n\n").joinToString("\n\n") { part ->
+                val keep = (part.length * factor).toInt()
+                if (part.length <= keep) part
+                else part.take(keep).let { t -> t.substring(0, t.lastIndexOf('\n').takeIf { it > keep / 2 } ?: t.length) }
+            }
 
         private val WORD = Regex("[\\p{L}\\d]{4,}")
         private val STOP = setOf("bitte", "sich", "sind", "wird", "werden", "noch", "dann", "auch", "eine",

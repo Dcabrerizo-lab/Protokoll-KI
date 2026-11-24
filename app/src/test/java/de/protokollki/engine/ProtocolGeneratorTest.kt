@@ -210,4 +210,12 @@ class ProtocolGeneratorTest {
         assertEquals("Kurz.", sum.overview)
         assertEquals(listOf("Umzug"), sum.topics.map { it.title })
     }
+
+    @Test
+    fun shortenEvenlyKeepsEveryPart() {
+        val text = (1..3).joinToString("\n\n") { n -> "Notizen zu Teil $n:\n" + (1..20).joinToString("\n") { "- Punkt $it aus Teil $n" } }
+        val short = ProtocolGenerator.shortenEvenly(text, 0.5)
+        assertTrue(short.length < text.length * 0.6)
+        (1..3).forEach { assertTrue(short.contains("Notizen zu Teil $it:")) }
+    }
 }

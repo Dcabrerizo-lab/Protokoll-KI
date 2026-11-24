@@ -1,0 +1,57 @@
+package de.protokollki.engine
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class TokenAlignTest {
+    private val tokens = arrayOf(" G", "uten", " Mor", "gen", ".", " Ja", ",", " gern", "e", ".")
+    private val ts = floatArrayOf(0.1f, 0.2f, 0.4f, 0.5f, 0.6f, 3.0f, 3.1f, 3.3f, 3.4f, 3.5f)
+
+    @Test
+    fun tokensBecomeWordsWithOffset() {
+        val w = TokenAlign.words(tokens, ts, null, 10f)
+        assertEquals(listOf("Guten", "Morgen.", "Ja,", "gerne."), w.map { it.text })
+        assertEquals(10.1f, w[0].start, 0.001f)
+        assertEquals(13.0f, w[2].start, 0.001f)
+    }
+
+    @Test
+    fun wordsAreGroupedBySpeakerAndRenumbered() {
+        val w = TokenAlign.words(tokens, ts, null, 0f)
+        val turns = listOf(Transcriber.Turn(0f, 1f, 5), Transcriber.Turn(2.8f, 4f, 2))
+        val s = TokenAlign.segments(w, turns)
+        assertEquals(2, s.size)
+        assertEquals("Guten Morgen.", s[0].text)
+        assertEquals(0, s[0].speakerId)
+        assertEquals("Ja, gerne.", s[1].text)
+        assertEquals(1, s[1].speakerId)
+    }
+
+    @Test
+    fun wordsBetweenTurnsGoToNearestSpeaker() {
+        val turns = listOf(Transcriber.Turn(0f, 1f, 0), Transcriber.Turn(5f, 6f, 1))
+        assertEquals(0, TokenAlign.speakerAt(1.5f, turns))
+        assertEquals(1, TokenAlign.speakerAt(4.2f, turns))
+        assertEquals(0, TokenAlign.speakerAt(3f, emptyList()))
+    }
+
+    @Test
+    fun singleStrayWordIsMergedIntoSurroundingSpeaker() {
+        val w = listOf(
+            TokenAlign.Word("Wir", 0f, 0.3f), TokenAlign.Word("teilen", 0.3f, 0.6f),
+            TokenAlign.Word("die", 0.6f, 0.8f), TokenAlign.Word("Tour.", 0.8f, 1.2f),
+        )
+        // "die" fällt in einen winzigen Abschnitt eines anderen Sprechers
+        val turns = listOf(Transcriber.Turn(0f, 0.6f, 0), Transcriber.Turn(0.6f, 0.8f, 1), Transcriber.Turn(0.8f, 2f, 0))
+        val s = TokenAlign.segments(w, turns)
+        assertEquals(1, s.size)
+        assertEquals("Wir teilen die Tour.", s[0].text)
+    }
+
+    @Test
+    fun windowsCutAtQuietPoints() {
+        val win = TokenAlign.windows(60f) { from, _ -> from + 2f }
+        assertEquals(listOf(0f to 17f, 17f to 34f, 34f to 51f, 51f to 60f), win)
+        assertEquals(listOf(0f to 10f), TokenAlign.windows(10f) { a, _ -> a })
+    }
+}

@@ -69,15 +69,30 @@ object ModelCatalog {
         direct = listOf("encoder.int8.onnx", "decoder.int8.onnx", "tokens.txt").map { "$name-$it" },
     )
 
+    /**
+     * NVIDIA Parakeet TDT 0.6B v3 (25 europäische Sprachen, auch Deutsch, mit Satzzeichen und
+     * Zeitstempeln je Wort). Auf deutschen Testbesprechungen gleich genau wie Whisper large-v3-turbo,
+     * aber etwa 7-mal schneller, weil lange Fenster am Stück verarbeitet werden.
+     */
+    private val parakeet = ModelFile(
+        url = "$GH/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
+        target = "parakeet-v3",
+        bytes = 487_211_443,
+        extract = listOf("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt").associate {
+            "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/$it" to "parakeet-$it"
+        },
+        direct = listOf("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt").map { "parakeet-$it" },
+    )
+
     val sets = listOf(
         ModelSet(
             id = "ultra",
             label = "Ultra",
             fitsFor = "z. B. Galaxy S24 Ultra, S25 Ultra, Pixel 9 Pro · ab 12 GB RAM",
-            description = "Höchste Qualität. Whisper large-v3-turbo und Qwen3 8B.",
+            description = "Höchste Qualität. Parakeet-Spracherkennung und Qwen3 8B.",
             minRamGb = 10.5,
-            whisperPrefix = "turbo",
-            whisper = whisper("turbo", 563_790_207),
+            whisperPrefix = "parakeet",
+            whisper = parakeet,
             llm = ModelFile(
                 url = "$HF/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
                 target = "Qwen3-8B-Q4_K_M.gguf",
@@ -90,10 +105,10 @@ object ModelCatalog {
             id = "premium",
             label = "Premium",
             fitsFor = "z. B. Galaxy S23, S23+, S24, Pixel 8 · 8 GB RAM",
-            description = "Sehr gute Qualität. Whisper large-v3-turbo und Qwen3 4B.",
-            minRamGb = 7.0,
-            whisperPrefix = "turbo",
-            whisper = whisper("turbo", 563_790_207),
+            description = "Sehr gute Qualität, schnell. Parakeet-Spracherkennung und Qwen3 4B.",
+            minRamGb = 6.5,   // Galaxy S23/S23+ melden 6,9 GB
+            whisperPrefix = "parakeet",
+            whisper = parakeet,
             llm = ModelFile(
                 url = "$HF/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
                 target = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
@@ -105,10 +120,10 @@ object ModelCatalog {
             id = "standard",
             label = "Standard",
             fitsFor = "z. B. Galaxy A54, A55, Pixel 6a · 6 GB RAM",
-            description = "Gute Qualität. Whisper small und Qwen2.5 3B.",
+            description = "Gute Qualität. Parakeet-Spracherkennung und Qwen2.5 3B.",
             minRamGb = 5.0,
-            whisperPrefix = "small",
-            whisper = whisper("small", 639_387_718),
+            whisperPrefix = "parakeet",
+            whisper = parakeet,
             llm = ModelFile(
                 url = "$HF/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
                 target = "qwen2.5-3b-instruct-q4_k_m.gguf",
@@ -120,10 +135,10 @@ object ModelCatalog {
             id = "kompakt",
             label = "Kompakt",
             fitsFor = "ältere Handys · 4 GB RAM",
-            description = "Schnell und sparsam. Whisper base und Qwen2.5 1.5B.",
+            description = "Schnell und sparsam. Parakeet-Spracherkennung und Qwen2.5 1.5B.",
             minRamGb = 0.0,
-            whisperPrefix = "base",
-            whisper = whisper("base", 207_557_382),
+            whisperPrefix = "parakeet",
+            whisper = parakeet,
             llm = ModelFile(
                 url = "$HF/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
                 target = "qwen2.5-1.5b-instruct-q4_k_m.gguf",
