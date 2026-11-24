@@ -82,7 +82,7 @@ jobs:
           GERAETE: ${{ inputs.geraete }}
         run: |
           if [ -n "$GERAETE" ]; then
-            devices=$(python3 -c "import json,os;print(json.dumps([dict(name=m,model=m,version=v,set=s) for m,v,s in (x.strip().split(':') for x in os.environ['GERAETE'].split(',') if x.strip())]))")
+            devices=$(python3 -c "import json,os;print(json.dumps([m+'|'+m+'|'+v+'|'+s for m,v,s in (x.strip().split(':') for x in os.environ['GERAETE'].split(',') if x.strip())]))")
           else
             gcloud firebase test android models list --filter=form=PHYSICAL --format=json > catalog.json
             devices=$(python3 scripts/firebase/pick_devices.py catalog.json "$AUSWAHL")
@@ -125,7 +125,7 @@ jobs:
             app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 
   device:
-    name: ${{ matrix.d.name }} · ${{ matrix.d.set }}
+    name: ${{ matrix.d }}
     needs: [setup, build]
     if: needs.setup.outputs.ready == 'true' && needs.setup.outputs.devices != '[]'
     runs-on: ubuntu-latest
@@ -136,6 +136,14 @@ jobs:
         d: ${{ fromJSON(needs.setup.outputs.devices) }}
     steps:
       - uses: actions/checkout@v4
+      - name: Gerät
+        id: d
+        env:
+          D: ${{ matrix.d }}
+        run: |
+          IFS='|' read -r name model version set <<< "$D"
+          { echo "name=$name"; echo "model=$model"; echo "version=$version"; echo "set=$set"; } >> "$GITHUB_OUTPUT"
+          echo "$name ($model, API $version, Paket $set)"
       - uses: actions/download-artifact@v4
         with:
           name: testlab-apks
@@ -149,14 +157,14 @@ jobs:
         run: |
           APP=$(find apks -name app-debug.apk | head -1)
           TEST=$(find apks -name app-debug-androidTest.apk | head -1)
-          DIR="run-${GITHUB_RUN_ID}-${{ strategy.job-index }}-${{ matrix.d.model }}"
+          DIR="run-${GITHUB_RUN_ID}-${{ strategy.job-index }}-${{ steps.d.outputs.model }}"
           set +e
           gcloud firebase test android run \
             --type instrumentation \
             --app "$APP" --test "$TEST" \
-            --device "model=${{ matrix.d.model }},version=${{ matrix.d.version }},locale=de_DE,orientation=portrait" \
+            --device "model=${{ steps.d.outputs.model }},version=${{ steps.d.outputs.version }},locale=de_DE,orientation=portrait" \
             --test-targets "class de.protokollki.RealDeviceTest" \
-            --environment-variables "modelSet=${{ matrix.d.set }}" \
+            --environment-variables "modelSet=${{ steps.d.outputs.set }}" \
             --timeout 45m \
             --num-flaky-test-attempts 0 \
             --results-dir "$DIR" 2>&1 | tee gcloud.txt
@@ -178,7 +186,7 @@ jobs:
         if: always()
         run: |
           mkdir -p results
-          python3 scripts/firebase/report.py results "${{ matrix.d.name }} · Paket ${{ matrix.d.set }}" \
+          python3 scripts/firebase/report.py results "${{ steps.d.outputs.name }} · Paket ${{ steps.d.outputs.set }}" \
             "${{ steps.run.outputs.link }}" "${{ steps.run.outputs.code }}" | tee report.md
           ok=${PIPESTATUS[0]}
           cat report.md >> "$GITHUB_STEP_SUMMARY"
@@ -191,7 +199,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: firebase-${{ matrix.d.model }}-${{ strategy.job-index }}
+          name: firebase-${{ steps.d.outputs.model }}-${{ strategy.job-index }}
           path: |
             results/
             gcloud.txt
