@@ -65,6 +65,9 @@ if tests:
     lines += ["| Schritt | Ergebnis | Hinweis |", "|---|---|---|"]
     for name, status, msg in tests:
         lines.append(f"| {NAMES.get(name, name)} | {status} | {msg.replace('|', '/')} |")
+elif "storage.objects.create" in read("gcloud.txt") or "PERMISSION_DENIED" in read("gcloud.txt"):
+    lines.append("Kein Test gestartet: dem Firebase-Schlüssel fehlt die Rolle „Bearbeiter“ (Editor) im Projekt. "
+                 "Es wurde kein Tagestest verbraucht.")
 else:
     lines.append(f"Keine Testergebnisse erhalten (gcloud-Code {code}). Häufige Ursache: Tageslimit "
                  "von 5 Gerätetests erreicht oder Gerät gerade belegt.")
