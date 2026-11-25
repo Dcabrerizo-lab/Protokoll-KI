@@ -120,7 +120,8 @@ object TranscriptRules {
 
     private val STOP = setOf("über", "wird", "werden", "wurde", "eine", "einen", "einem", "einer", "dass", "sich",
         "nicht", "noch", "dann", "auch", "abstimmung", "antrag", "angenommen", "abgelehnt", "beschluss",
-        "beschlossen", "stimmen", "enthaltung", "enthaltungen", "einstimmig", "euro", "jahr")
+        "beschlossen", "stimmen", "enthaltung", "enthaltungen", "einstimmig", "euro", "jahr", "danke", "euch",
+        "ihnen", "gerne", "ordnung", "prima", "okay", "genau", "alles", "klar", "selbstverständlich", "selbst")
 
     internal fun stems(t: String): Set<String> = rx("[\\p{L}\\d]{4,}").findAll(t.lowercase())
         .map { it.value }.filter { it !in STOP }.map { it.take(5) }.toSet()
@@ -275,20 +276,78 @@ object TranscriptRules {
         return if ((stems(best) intersect w).isEmpty()) text else best
     }
 
+    data class Commitment(val ref: Int, val sentence: String)
+
+    private val STAFF_DOES = rx("\\b(?:Frau|Herr)\\s+(?:Dr\\.\\s+)?[A-ZÄÖÜ][\\p{L}-]{1,30}\\s+(?:übernimmt|organisiert|beantragt|kümmert sich|klärt|erstellt|bestellt|fordert|ruft|schreibt|meldet|prüft|kontaktiert|informiert|besorgt|holt|plant|dokumentiert|trägt|schickt|lädt)\\b")
+    private val PLEASE_DO = rx("\\bbitte\\s+(?:[\\p{L}-]+\\s+){0,5}[\\p{L}]+(?:en|ern|eln)\\s*[.!]?$", true)
+
+    /**
+     * Sätze, die eine Aufgabe vergeben oder zusagen: Selbstverpflichtung mit Inhalt ("Ich kümmere mich um die
+     * Genehmigung"), Bitte an jemanden ("Können Sie … ?", "laden Sie bitte … ein"), Zuweisung in dritter Person
+     * ("Frau Schmidt beantragt …") und Bitten ohne Person ("bitte auf Flüssigkeit achten").
+     * Bloße Zusagen ohne Inhalt ("Ja, mache ich.") zählen nicht – dort steht die Aufgabe im Satz davor.
+     */
+    fun commitments(segments: List<Segment>): List<Commitment> = segments.flatMapIndexed { i, seg ->
+        seg.text.split(rx("(?<=[.?!])\\s+")).map { it.trim() }.filter { it.isNotEmpty() }.filter { sen ->
+            val content = stems(SELF_COMMIT.replace(sen, " ")).size
+            (SELF_COMMIT.containsMatchIn(sen) && content >= 2) || REQUEST.containsMatchIn(sen) ||
+                STAFF_DOES.containsMatchIn(sen) || PLEASE_DO.containsMatchIn(sen)
+        }.map { Commitment(i, it) }
+    }
+
     // ------------------------------------------------------------ Fristen
 
     private val DEADLINE = rx("\\bbis\\s+(?=((?:zum|zur|spätestens|ende|anfang|mitte|nächsten|nächste|kommenden|kommende|übermorgen|morgen|heute)?\\s*[^.,;!?]{2,28}))",
         true)
 
+    private val ORDINALS = listOf("erst", "zweit", "dritt", "viert", "fünft", "sechst", "siebt", "acht", "neunt", "zehnt",
+        "elft", "zwölft", "dreizehnt", "vierzehnt", "fünfzehnt", "sechzehnt", "siebzehnt", "achtzehnt", "neunzehnt",
+        "zwanzigst", "einundzwanzigst", "zweiundzwanzigst", "dreiundzwanzigst", "vierundzwanzigst", "fünfundzwanzigst",
+        "sechsundzwanzigst", "siebenundzwanzigst", "achtundzwanzigst", "neunundzwanzigst", "dreißigst", "einunddreißigst")
+    private const val MONTHS = "januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember"
+    private val ORDINAL_DATE = rx("\\b(${ORDINALS.sortedByDescending { it.length }.joinToString("|")})(?:e|en|er|es|em)\\s+($MONTHS)\\b", true)
+    private val DOTTED_DATE = rx("(\\d{1,2})\\.\\s+($MONTHS)\\b", true)
+    private val DAY_MONTH = rx("(\\d{1,2})\\s+($MONTHS)\\b", true)
+    private val THIS_WEEK = rx("\\b(?:in\\s+)?(?:noch\\s+)?diese[rn]?\\s+woche\\b", true)
+
+    /** "zum zwanzigsten Dezember" -> "zum 20. Dezember" */
+    fun normalizeOrdinals(text: String): String = ORDINAL_DATE.replace(text) { m ->
+        "${ORDINALS.indexOf(m.groupValues[1].lowercase()) + 1}. ${m.groupValues[2]}"
+    }
+
+    /** Frist: "zwanzigsten Dezember" -> "20. Dezember", "möglichst diese Woche" -> "Ende dieser Woche". */
+    fun normalizeDue(text: String): String {
+        var t = normalizeOrdinals(text)
+        if (THIS_WEEK.containsMatchIn(t) && !t.contains("ende", ignoreCase = true)) t = "Ende dieser Woche"
+        return t
+    }
+
+    private val DUE_FILLER = setOf("bis", "zum", "zur", "ende", "anfang", "mitte", "spätestens", "noch", "nach", "der",
+        "dem", "den", "des", "möglichst", "etwa", "ca", "am", "im", "in")
+
+    /**
+     * Steht die Frist des Modells so im Gespräch (Beleg oder Nachbarbeitrag)? Erfundene oder selbst
+     * umgerechnete Angaben ("nach dem Besuch", "26.11.2026") gelten als nicht belegt.
+     */
+    fun dueSupported(due: String, context: String): Boolean {
+        val words = rx("[\\p{L}\\d]+").findAll(normalizeDue(due).lowercase()).map { it.value }
+            .filter { it !in DUE_FILLER && it.length >= 2 }.toList()
+        if (words.isEmpty()) return true
+        val ctx = normalizeOrdinals(context).lowercase()
+        return words.any { w -> ctx.contains(if (w.length > 5) w.take(5) else w) }
+    }
+
     /** Eindeutige Frist aus dem Beleg ("bis Freitag", "bis Ende März"), sonst null. */
-    fun deadlineFromRef(text: String, meeting: LocalDate): String? {
+    fun deadlineFromRef(raw: String, meeting: LocalDate): String? {
+        // "20. Dezember": der Punkt beendet hier keinen Satz
+        val text = DOTTED_DATE.replace(normalizeOrdinals(raw), "$1 $2")
         val found = DEADLINE.findAll(text).mapNotNull { m ->
             val words = m.groupValues[1].trim().split(rx("\\s+"))
             // kürzester Anfang, den der DateResolver versteht ("bis Freitag drei Angebote" -> "Freitag")
             (1..minOf(4, words.size)).map { words.take(it).joinToString(" ") }
                 .firstOrNull { DateResolver.parse(it, meeting) != null || it.lowercase().endsWith("sitzung") }
         }.distinct().toList()
-        return found.singleOrNull()
+        return found.singleOrNull()?.let { DAY_MONTH.replace(it, "$1. $2") }
     }
 
     // ------------------------------------------------------------ Erledigte Aufgaben

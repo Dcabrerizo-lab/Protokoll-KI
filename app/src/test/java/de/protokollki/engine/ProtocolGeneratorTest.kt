@@ -65,11 +65,12 @@ class ProtocolGeneratorTest {
     @Test
     fun verbatimModeOnlyExtractsTasks() {
         val model = FakeModel { _, _ ->
-            """{"aufgaben": [{"aufgabe": "X erledigen [1]", "verantwortlich": "offen", "frist": "morgen"}], "erledigte_aufgaben": [], "sensible_daten": []}"""
+            """{"aufgaben": [{"aufgabe": "Liste schreiben [1]", "verantwortlich": "offen", "frist": "Freitag"}, {"aufgabe": "Bericht senden [1]", "verantwortlich": "offen", "frist": "morgen"}], "erledigte_aufgaben": [], "sensible_daten": []}"""
         }
         val r = ProtocolGenerator(model).generate("T", monday, segments, speakers, wantSummary = false) { _, _ -> true }
         assertTrue(r.summary.isEmpty)
-        assertEquals("Di., 24.11.2026", r.tasks.single().due)
+        assertEquals("Fr., 27.11.2026", r.tasks[0].due)
+        assertEquals("offen", r.tasks[1].due)          // "morgen" fällt im Gespräch nicht: nicht erfinden
         assertTrue(model.prompts[0].contains("immer leere Liste"))
     }
 

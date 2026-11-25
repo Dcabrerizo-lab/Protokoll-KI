@@ -144,31 +144,44 @@ class ProtocolGenerator(private val model: TextModel) {
             }
         }
 
-        // Kleine Modelle lassen im kombinierten Durchgang manchmal die Aufgaben weg:
-        // dann gezielt nachfassen (nur Aufgaben, je Abschnitt).
-        if (wantSummary && raws.none { r -> runCatching { parseTasks(r, segments.size) }.getOrDefault(emptyList()).isNotEmpty() }) {
-            for (c in chunks) {
-                val label = "Prüfe Aufgaben …"
-                if (!progress.update(0.97f, label)) throw LlmException("Abgebrochen")
-                raws += model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c),
-                    tasksMax, 0.0f, TASKS_GRAMMAR, null)
-            }
-        }
-
         val meetingDate = java.time.Instant.ofEpochMilli(dateMillis)
             .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
         val n = segments.size
         val mentioned = (segments.joinToString(" ") { it.text } + " " + (invited + vocabulary).joinToString(" ")).lowercase()
         var summary = if (wantSummary) runCatching { parseSummary(raws.first(), n) }.getOrElse { Summary() } else Summary()
-        val tasks = raws.flatMap { r -> runCatching { parseTasks(r, n) }.getOrDefault(emptyList()) }
+        fun refine(list: List<TaskItem>) = list
             .map { it.copy(ref = checkRef(it.text, it.ref, segments)) }
-            .map { t ->
-                if (t.due != "offen") t
-                else segments.getOrNull(t.ref)?.let { sentenceFor(t.text, it.text) }
-                    ?.let { TranscriptRules.deadlineFromRef(it, meetingDate) }?.let { t.copy(due = it) } ?: t
-            }
+            .map { t -> t.copy(due = checkDue(t, segments, meetingDate)) }
             .map { it.copy(due = DateResolver.resolve(it.due, meetingDate)) }
             .map { it.copy(owner = resolveOwner(it.owner, it.ref, segments, ::nameOf, it.text, known, mentioned)) }
+        var tasks = refine(raws.flatMap { r -> runCatching { parseTasks(r, n) }.getOrDefault(emptyList()) })
+
+        // Aufgaben-Nachfassen: Zusagen und Aufträge im Transkript, die keine Aufgabe abdeckt (kleine Modelle
+        // übersehen sie oft), in einer kurzen Runde nur mit diesen Sätzen ausformulieren lassen – liest nicht
+        // das ganze Transkript neu.
+        val pending = TranscriptRules.commitments(segments).filter { c -> tasks.none { covers(it, c, segments) } }
+            .distinctBy { it.ref to it.sentence }.take(8)
+        if (pending.isNotEmpty()) {
+            if (!progress.update(0.97f, "Prüfe Aufgaben …")) throw LlmException("Abgebrochen")
+            val listing = pending.joinToString("\n") { "[${it.ref}] ${nameOf(segments[it.ref].speakerId)}: ${it.sentence}" }
+            val raw: String? = model.complete(SYSTEM,
+                FOLLOWUP_PROMPT.format(header, TASK_RULES.substringBefore("Regeln für \"sensible_daten\"").trim(), listing),
+                minOf(tasksMax, 120 + 70 * pending.size), 0.0f, FOLLOWUP_GRAMMAR, null)
+            val refs = pending.map { it.ref }.toSet()
+            val extra = raw?.let { r -> runCatching { parseTasks(r, n) }.getOrDefault(emptyList()) }.orEmpty()
+                // nur Aufgaben, die zu einer der vorgelegten Aussagen gehören
+                .map { t -> if (t.ref in refs) t else t.copy(ref = pending.maxByOrNull { (words(t.text) intersect words(it.sentence)).size }?.ref ?: -1) }
+                .filter { t -> pending.any { it.ref == t.ref && (words(t.text) intersect words(it.sentence)).isNotEmpty() } }
+            tasks = tasks + refine(extra)
+        } else if (wantSummary && tasks.isEmpty()) {
+            // Keine Aufgaben und keine erkennbaren Zusagen: zur Sicherheit gezielt nachfassen (nur Aufgaben, je Abschnitt)
+            for (c in chunks) {
+                if (!progress.update(0.97f, "Prüfe Aufgaben …")) throw LlmException("Abgebrochen")
+                val r = model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c), tasksMax, 0.0f, TASKS_GRAMMAR, null)
+                raws += r
+                tasks = tasks + refine(runCatching { parseTasks(r, n) }.getOrDefault(emptyList()))
+            }
+        }
         val doneKeys = mutableMapOf<String, Int>()
         raws.forEach { r -> runCatching { parseCompleted(r, n) }.getOrDefault(emptyList()).forEach { (k, ref) -> doneKeys.putIfAbsent(k, ref) } }
         if (openTasks.isNotEmpty()) {
@@ -240,11 +253,11 @@ Transkript:
 %s
 """.trimIndent()
 
-        private const val CITE_RULE = """Quellenangabe: Setze an das Ende JEDES Punkts, Beschlusses, offenen Punkts und jeder Aufgabe die Nummer der Transkriptzeile, die ihn belegt, in eckigen Klammern, z. B. "Ab März wird die Tour Nord geteilt. [8]"."""
+        private const val CITE_RULE = """Quellenangabe: Setze an das Ende JEDES Punkts, Beschlusses, offenen Punkts und jeder Aufgabe die Nummer der Transkriptzeile, die ihn belegt, in eckigen Klammern, Muster: "<Aussage>. [8]"."""
 
         private const val TASK_RULES = """Regeln für "aufgaben" (alles, was jemand erledigen soll oder zugesagt hat):
-- "aufgabe": kurz und konkret, mit dem Verb am Ende (z. B. "Drei Angebote für Möbel einholen [3]").
-- "verantwortlich": Name der zuständigen Person, wie er im Gespräch fällt (wird jemand mit "Frau X" oder "Herr Y" angesprochen, diesen Namen verwenden). Sagt jemand "mache ich", ist es die sprechende Person. Unklar: "offen".
+- "aufgabe": kurz und konkret, mit dem Verb am Ende, Muster: "<Gegenstand> <Verb> [Zeilennummer]".
+- "verantwortlich": Name der Person, die die Aufgabe übernimmt, wie er im Gespräch fällt. Wird jemand mit "Frau …" oder "Herr …" angesprochen oder genannt, diesen Namen verwenden. Sagt jemand "mache ich" oder "ich kümmere mich", ist es die sprechende Person (Name vor dem Doppelpunkt). Unklar: "offen".
 - "frist": die Zeitangabe GENAU so, wie sie im Gespräch genannt wurde (z. B. "Freitag", "Ende Januar", "15. Januar", "nächste Sitzung"). NICHT selbst in ein Datum umrechnen. Keine Angabe: "offen".
 - Nur echte Aufgaben, nichts erfinden.
 Regeln für "sensible_daten": Namen von Klienten, Patienten, Bewohnern oder anderen Personen, über die gesprochen wird (NICHT die Teilnehmenden), sowie Adressen, Telefonnummern, Geburtsdaten und Diagnosen, jeweils genau so geschrieben wie im Transkript. Leere Liste, wenn keine."""
@@ -276,7 +289,7 @@ Regeln für "sensible_daten": Namen von Klienten, Patienten, Bewohnern oder ande
 Erstelle aus dem folgenden Material ein professionelles Ergebnisprotokoll als JSON:
 - "zusammenfassung": 3 bis 5 Sätze, worum es ging und was herauskam (ohne Quellenangabe).
 - "themen": die besprochenen Themen in zeitlicher Reihenfolge. Je Thema ein kurzer "titel" und 2 bis 6 "punkte" mit Ergebnissen, Argumenten und Zahlen (vollständige, knappe Sätze).
-- "beschluesse": Entscheidungen, die die Runde getroffen hat (z. B. "Ab März wird ..."). Reine Aufgabenverteilungen gehören NICHT hierher, sondern zu "aufgaben". Leere Liste, wenn keine.
+- "beschluesse": Entscheidungen, die die Runde getroffen hat, und jede Abstimmung mit ihrem Ergebnis (angenommen/abgelehnt). Reine Aufgabenverteilungen gehören NICHT hierher, sondern zu "aufgaben". Leere Liste, wenn keine.
 - "offene_punkte": ungeklärte Fragen und vertagte Themen. Leere Liste, wenn keine.
 - "aufgaben", "erledigte_aufgaben", "sensible_daten": siehe Regeln.
 
@@ -296,6 +309,17 @@ Transkript:
 %s
 """.trimIndent()
 
+        val FOLLOWUP_PROMPT = """
+%s
+
+Die folgenden Aussagen aus dem Gespräch enthalten Zusagen oder Aufträge. Formuliere aus jeder Aussage, die eine Aufgabe ist, genau eine Aufgabe als JSON und übernimm die Zeilennummer in eckigen Klammern. Ist eine Aussage keine Aufgabe, lass sie weg.
+
+%s
+
+Aussagen:
+%s
+""".trimIndent()
+
         private const val JSON_STRING =
             "string ::= \"\\\"\" ( [^\"\\\\\\x7F\\x00-\\x1F] | \"\\\\\" ([\"\\\\/bfnrt] | \"u\" [0-9a-fA-F]{4}) )* \"\\\"\"\n" +
                 "ws ::= [ \\t\\n]{0,20}\n" +
@@ -312,6 +336,10 @@ thema ::= "{" ws "\"titel\":" ws string ws "," ws "\"punkte\":" ws strlist ws "}
 
         val TASKS_GRAMMAR = """
 root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
+""".trimIndent() + "\n" + JSON_STRING
+
+        val FOLLOWUP_GRAMMAR = """
+root ::= "{" ws "\"aufgaben\":" ws tasks ws "}"
 """.trimIndent() + "\n" + JSON_STRING
 
         private val ADDRESS = Regex("\\b(Frau|Herr|Herrn)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})")
@@ -378,6 +406,28 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
             if (ref !in segments.indices) return locateRef(taskText, segments)
             if ((words(taskText) intersect words(segments[ref].text)).isNotEmpty()) return ref
             return locateRef(taskText, segments).takeIf { it >= 0 } ?: ref
+        }
+
+        /**
+         * Frist einer Aufgabe: Angabe des Modells, wenn sie im Beleg (oder direkt davor/danach) vorkommt,
+         * sonst eine eindeutige "bis …"-Angabe aus dem Beleg, sonst "offen". Zahlwörter werden zu Ziffern.
+         */
+        internal fun checkDue(t: TaskItem, segments: List<Segment>, meeting: java.time.LocalDate): String {
+            val seg = segments.getOrNull(t.ref) ?: return TranscriptRules.normalizeDue(t.due)
+            val context = (t.ref - 1..t.ref + 1).mapNotNull { segments.getOrNull(it)?.text }.joinToString(" ")
+            // Beleg kann eine Zeile daneben liegen: auch Beiträge zur selben Sache zählen
+            val related = segments.filter { (words(t.text) intersect words(it.text)).size >= 2 }.joinToString(" ") { it.text }
+            if (t.due != "offen" && TranscriptRules.dueSupported(t.due, "$context $related")) return TranscriptRules.normalizeDue(t.due)
+            return TranscriptRules.deadlineFromRef(sentenceFor(t.text, seg.text), meeting)
+                ?: TranscriptRules.deadlineFromRef(seg.text, meeting) ?: "offen"
+        }
+
+        /** Deckt die Aufgabe die Zusage ab? Beleg daneben und ein gemeinsames Wort, oder zwei gemeinsame Wörter. */
+        internal fun covers(t: TaskItem, c: TranscriptRules.Commitment, segments: List<Segment>): Boolean {
+            // Wortanfänge auch innerhalb von Zusammensetzungen ("reserv" in "Busreservierung")
+            val sentence = c.sentence.lowercase()
+            val shared = words(t.text).count { sentence.contains(it) }
+            return shared >= 2 || (shared >= 1 && t.ref in (c.ref - 1)..(c.ref + 1))
         }
 
         /** Der Satz eines Beitrags, der die meisten Wörter mit der Aufgabe teilt (sonst der ganze Beitrag). */

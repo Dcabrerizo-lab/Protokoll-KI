@@ -112,6 +112,7 @@ private fun openModel(): CountingModel {
         override fun countTokens(text: String) = text.length / 3 + 1
         override fun complete(system: String, user: String, maxTokens: Int, temperature: Float,
                               grammar: String?, progress: LlmProgress?): String {
+            if (user.contains("\nAussagen:\n")) println("ATTRAPPE-NACHFASSEN\n" + user.substringAfter("\nAussagen:\n"))
             val o = """{"zusammenfassung": "Attrappe.", "themen": [], "beschluesse": [], "offene_punkte": [],
                 "aufgaben": [], "erledigte_aufgaben": [], "sensible_daten": []}"""
             record(system, user, o); return o

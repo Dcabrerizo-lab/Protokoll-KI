@@ -189,4 +189,31 @@ class TranscriptRulesTest {
         assertTrue(found.toString(), found.any { it.startsWith("null eins sieben null") })
         assertEquals(2, found.size)
     }
+
+    @Test
+    fun dueNormalizationAndSupport() {
+        assertEquals("20. Dezember", TranscriptRules.normalizeDue("zwanzigsten Dezember"))
+        assertEquals("bis zum 10. Januar", TranscriptRules.normalizeDue("bis zum zehnten Januar"))
+        assertEquals("Ende dieser Woche", TranscriptRules.normalizeDue("möglichst in dieser Woche"))
+        assertEquals("zum ersten Mal", TranscriptRules.normalizeDue("zum ersten Mal"))
+        val ctx = "Frau Schmidt beantragt bis zum zwanzigsten Dezember die Höherstufung."
+        assertTrue(TranscriptRules.dueSupported("20. Dezember", ctx))
+        assertTrue(TranscriptRules.dueSupported("bis zum zwanzigsten Dezember", ctx))
+        assertEquals(false, TranscriptRules.dueSupported("nach dem Hausbesuch", ctx))
+        assertEquals(false, TranscriptRules.dueSupported("26.11.2026", ctx))
+        assertEquals("zum 20. Dezember", TranscriptRules.deadlineFromRef(ctx, monday))
+    }
+
+    @Test
+    fun commitmentsFindPromisesAndRequestsOnly() {
+        val s = segs(
+            0 to "Frau Lange, können Sie bis Montag die Raumbuchung erledigen?",
+            1 to "Ja, mache ich. Mache ich, danke euch.",
+            2 to "Ich finde das Budget zu hoch. Ich schreibe bis Freitag den Bericht für den Vorstand.",
+            0 to "Herr Brandt organisiert die Getränke. Die Lieferung kommt morgen, bitte an der Pforte annehmen.",
+            1 to "Ich habe die Liste gestern verschickt.",
+        )
+        assertEquals(listOf(0, 2, 3, 3), TranscriptRules.commitments(s).map { it.ref })
+        assertEquals("Ich schreibe bis Freitag den Bericht für den Vorstand.", TranscriptRules.commitments(s)[1].sentence)
+    }
 }
