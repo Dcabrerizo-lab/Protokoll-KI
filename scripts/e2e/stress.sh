@@ -55,6 +55,9 @@ retry_ui() {
     info "Erneut versuchen hat nicht gegriffen, Oberfläche: $(ui_texts)"
   done
   debug_log "Erneut versuchen"
+  info "Diagnose: Einstellungen $(adb shell "run-as $PKG cat shared_prefs/settings.xml" 2>/dev/null | tr -d '\r\n' | grep -o 'modelSetId[^/]*')"
+  info "Diagnose: Modelle $(adb shell "run-as $PKG ls files/models" 2>/dev/null | tr '\r\n' '  ')"
+  info "Diagnose: Oberfläche roh $(ui_dump | grep -o 'text="[^"]*"\|clickable="true"[^>]*bounds="[^"]*"' | tr '\n' ' ' | head -c 3000)"
   return 1
 }
 
