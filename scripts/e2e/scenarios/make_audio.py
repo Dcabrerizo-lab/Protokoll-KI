@@ -3,6 +3,11 @@
 Aufruf: python make_audio.py <voices_dir> <out_dir>
 Ergebnis je Szenario: <name>.wav (16 kHz mono), <name>.json (Referenz: Sprecher, Zeiten, Text, Erwartungen).
 Varianten: *_laerm (Störgeräusch ~10 dB SNR), *_leise (-26 dB), lang (~7 min), stille, kurz.
+
+Stress-Szenarien (werden nicht eingecheckt, siehe scenarios.STRESS):
+  python make_audio.py <voices_dir> <out_dir> --stress       Basis + Stress
+  python make_audio.py <voices_dir> <out_dir> --nur-stress   nur Stress (Basis wird nur intern erzeugt)
+  zusätzlich --marathon: sehr lange Aufnahme (scenarios.MARATHON_MINUTES) nur für den Host-Benchmark
 """
 import json
 import os
@@ -17,6 +22,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 from scenarios import LONG_PARTS, SCENARIOS, VOCABULARY, VOICES  # noqa: E402
 
 VOICE_DIR, OUT = sys.argv[1], sys.argv[2]
+FLAGS = set(sys.argv[3:])
+ONLY_STRESS = "--nur-stress" in FLAGS
+WITH_STRESS = ONLY_STRESS or "--stress" in FLAGS
+MARATHON = "--marathon" in FLAGS
 os.makedirs(OUT, exist_ok=True)
 rng = np.random.default_rng(42)
 
@@ -48,6 +57,8 @@ def synth(lines, speed=1.05):
 
 
 def write(name, audio, meta):
+    if ONLY_STRESS and not name.startswith("stress_"):
+        return
     meta = {**meta, "vocabulary": VOCABULARY.get(name, [])}
     sf.write(f"{OUT}/{name}.wav", np.clip(audio, -1, 1), 16000, subtype="PCM_16")
     json.dump(meta, open(f"{OUT}/{name}.json", "w"), ensure_ascii=False, indent=1)
@@ -92,3 +103,8 @@ write("stille", rng.standard_normal(16000 * 20).astype(np.float32) * 0.002,
       {"scenario": "stille", "template": "ALLGEMEIN", "agenda": [], "ref": [], "expect": {"error": True}})
 write("kurz", cache["zwei_personen"][0][: int(16000 * 0.6)],
       {"scenario": "kurz", "template": "ALLGEMEIN", "agenda": [], "ref": [], "expect": {"error": True}})
+
+if WITH_STRESS or MARATHON:
+    import stress_audio  # noqa: E402
+    stress_audio.run(VOICE_DIR, tts, cache, write, written=[(n, *cache[n]) for n in SCENARIOS],
+                     marathon=MARATHON, out_dir=OUT)
