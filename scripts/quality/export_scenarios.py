@@ -82,6 +82,9 @@ def main(path):
         gold["names"] += g.get("names", [])
         gold["sensitive"] += g.get("sensitive", [])
     gold["names"] = sorted(set(gold["names"]))
+    # Wer in einem Teil zum Team gehört (z. B. Becker), ist im Gesamttext nicht eindeutig Klient: nicht werten
+    staff = {n for p in LONG_PARTS for n in GOLD[p].get("not_sensitive", [])}
+    gold["sensitive"] = [alts for alts in gold["sensitive"] if not any(a in staff for a in alts)]
     segs, letters = build("lang", lines)
     out.append(entry("lang", {"template": "ALLGEMEIN"}, segs, letters, gold, "hart", VOCABULARY["lang"],
                      sorted({n for p in LONG_PARTS for n in PARTICIPANTS[p]})))

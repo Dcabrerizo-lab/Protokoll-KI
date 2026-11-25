@@ -20,7 +20,9 @@ import java.io.File
  * Aufruf: run --args="<szenarien.json> <ergebnis.jsonl>"
  * Umgebung: PK_LLM_LIB, PK_MODEL (ohne: Attrappe, nur zum Prüfen der Abläufe), PK_CTX (8192),
  * PK_NO_THINK=1 (Qwen3 mit Denkmodus), PK_STAGE (Name der Stufe), PK_VARIANTS ("ohne,mit"),
- * PK_ONLY (Komma-Liste von Szenarien), PK_GROUP (normal/hart).
+ * PK_ONLY (Komma-Liste von Szenarien), PK_GROUP (normal/hart/neu).
+ * PK_REPLAY=<log|jsonl>: statt eines Modells die dort aufgezeichneten Modellantworten wiederverwenden
+ * (prüft Änderungen an der Nachbearbeitung lokal in Sekunden; Stufe und Variante aus der Aufzeichnung).
  */
 fun main(args: Array<String>) {
     val scenarios = JSONArray(File(args[0]).readText())
@@ -30,7 +32,8 @@ fun main(args: Array<String>) {
     val variants = (System.getenv("PK_VARIANTS") ?: "ohne,mit").split(',').map { it.trim() }.filter { it.isNotEmpty() }
     val only = System.getenv("PK_ONLY")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
     val group = System.getenv("PK_GROUP")?.takeIf { it.isNotBlank() }
-    val model = openModel()
+    val replay = System.getenv("PK_REPLAY")?.let { loadReplay(File(it)) }
+    val model = if (replay != null) ReplayModel(replay) else openModel()
     val monday = 1795431600000L // Montag, 23.11.2026
 
     for (variant in variants) for (i in 0 until scenarios.length()) {
@@ -55,6 +58,7 @@ fun main(args: Array<String>) {
             val o = openJ.getJSONObject(it)
             ProtocolGenerator.OpenTask("A${it + 1}", "t${it + 1}", "m0", o.getString("text"), o.getString("owner"))
         }
+        if (model is ReplayModel) { if (!model.select(name, variant)) continue }
         model.reset()
         val t0 = System.currentTimeMillis()
         val r = runCatching {
@@ -64,7 +68,7 @@ fun main(args: Array<String>) {
                 participants = participants) { _, _ -> true }
         }
         val ms = System.currentTimeMillis() - t0
-        val res = JSONObject().put("stage", stage).put("variant", variant).put("scenario", name)
+        val res = JSONObject().put("stage", (model as? ReplayModel)?.stage ?: stage).put("variant", variant).put("scenario", name)
             .put("group", sc.getString("group")).put("ms", ms).put("llm_calls", model.calls)
             .put("prompt_tokens", model.promptTokens).put("out_chars", model.outChars)
             .put("voices", sc.getJSONArray("voices"))
@@ -94,6 +98,30 @@ private fun participantTerms(names: List<String>): List<String> = names.flatMap 
         .joinToString(" ").trim()
     if (core.isEmpty()) emptyList() else listOf(core) + core.split(' ').drop(1).filter { it.length >= 4 }
 }.distinct()
+
+private fun loadReplay(f: File): Map<Pair<String, String>, Pair<String, List<String>>> =
+    f.readLines().mapNotNull { line ->
+        val i = line.indexOf("PKRESULT ").let { if (it < 0) line.indexOf('{').takeIf { j -> j == 0 } ?: return@mapNotNull null else it }
+        val o = runCatching { JSONObject(line.substring(line.indexOf('{', i))) }.getOrNull() ?: return@mapNotNull null
+        val raws = o.optJSONArray("raw") ?: return@mapNotNull null
+        (o.getString("scenario") to o.getString("variant")) to (o.getString("stage") to (0 until raws.length()).map { raws.getString(it) })
+    }.toMap()
+
+/** Gibt die aufgezeichneten Antworten eines Szenarios der Reihe nach zurück. */
+private class ReplayModel(val data: Map<Pair<String, String>, Pair<String, List<String>>>) : CountingModel() {
+    var stage = "replay"; private var queue = ArrayDeque<String>()
+    fun select(name: String, variant: String): Boolean {
+        val d = data[name to variant] ?: return false
+        stage = d.first; queue = ArrayDeque(d.second); return true
+    }
+    override val contextSize = 8192
+    override fun countTokens(text: String) = text.length / 3 + 1
+    override fun complete(system: String, user: String, maxTokens: Int, temperature: Float,
+                          grammar: String?, progress: LlmProgress?): String {
+        val o = queue.removeFirstOrNull() ?: """{"aufgaben": [], "erledigte_aufgaben": [], "sensible_daten": []}"""
+        record(system, user, o); return o
+    }
+}
 
 private abstract class CountingModel : TextModel {
     var calls = 0; var promptTokens = 0; var outChars = 0

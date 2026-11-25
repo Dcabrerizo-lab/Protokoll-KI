@@ -278,4 +278,12 @@ class ProtocolGeneratorTest {
         )
         assertEquals(listOf("Hoffmann"), ProtocolGenerator.addressedClients(segs, emptyList()))
     }
+
+    @Test
+    fun speakerPrefixIsStrippedFromTaskText() {
+        val raw = """{"aufgaben":[{"aufgabe":"Person 2: Kontakt zum Kundendienst aufnehmen [1]","verantwortlich":"Person 2","frist":"offen"},
+            {"aufgabe":"Frau Kaiser: lädt alle ein [0]","verantwortlich":"Frau Kaiser","frist":"offen"}]}"""
+        val tasks = ProtocolGenerator.parseTasks(raw, 5)
+        assertEquals(listOf("Kontakt zum Kundendienst aufnehmen", "Lädt alle ein"), tasks.map { it.text })
+    }
 }

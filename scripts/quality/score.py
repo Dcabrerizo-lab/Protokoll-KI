@@ -34,6 +34,9 @@ def gold_for(name):
             g["names"] |= set(gp.get("names", []))
             g["sensitive"] += gp.get("sensitive", [])
         g["names"] = sorted(g["names"])
+        # Wer in einem Teil zum Team gehört (z. B. Becker), ist im Gesamttext nicht eindeutig Klient: nicht werten
+        staff = {n for p in LONG_PARTS for n in GOLD[p].get("not_sensitive", [])}
+        g["sensitive"] = [alts for alts in g["sensitive"] if not any(a in staff for a in alts)]
         return g
     return {}
 

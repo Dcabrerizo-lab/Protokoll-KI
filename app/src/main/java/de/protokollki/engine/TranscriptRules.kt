@@ -295,6 +295,20 @@ object TranscriptRules {
         return null
     }
 
+    /**
+     * Eindeutige Zuweisung im Belegsatz ("…, Herr Neumann übernimmt das Assessment"), die eine Namensangabe des
+     * Modells überstimmt. Selbstverpflichtungen zählen nur, wenn die Sprecherin namentlich bekannt ist.
+     */
+    fun explicitOwner(ref: Int, segments: List<Segment>, names: Map<Int, String>, taskText: String): String? {
+        val seg = segments.getOrNull(ref) ?: return null
+        val sentence = sentenceFor(taskText, seg.text)
+        if ((stems(sentence) intersect stems(taskText)).size < 2) return null
+        assignedName(sentence)?.takeIf { !it.equals(names[seg.speakerId], true) }?.let { return it }
+        val selfAt = SELF_COMMIT.find(sentence)?.range?.first ?: return null
+        val reqAt = listOfNotNull(REQUEST.find(sentence)?.range?.first, PLEASE_DO.find(sentence)?.range?.first).minOrNull()
+        return if (reqAt == null || selfAt < reqAt) names[seg.speakerId] else null
+    }
+
     /** "Frau X, …" (Anrede mit Komma/Fragezeichen) oder "Frau X beantragt …" (Zuweisung), sonst null. */
     fun assignedName(sentence: String): String? {
         for (m in ADDRESS.findAll(sentence)) {
@@ -304,6 +318,22 @@ object TranscriptRules {
         }
         return null
     }
+
+    private val VOCATIVE_LEAD = Regex("^\\s*(?:(?i:ja|gut|danke|okay|ok|also|und|richtig|prima|super|genau|schön|gerne|so|dann|bitte|hallo|verstanden|alles klar)[,.!]?\\s+)*")
+    private val PREP_BEFORE = rx("(?i:bei|mit|von|vom|für|an|zu|zur|um|über|wegen|nach|aus)\\s+$")
+
+    /** Im Gespräch direkt angesprochene oder beauftragte Personen ("Frau Kaiser, …", "Herr Wolf übernimmt …"): Team. */
+    fun staffNames(segments: List<Segment>): Set<String> = segments.flatMap { seg ->
+        seg.text.split(Regex("(?<=[.!?])\\s+")).flatMap { sentence ->
+            ADDRESS.findAll(sentence).filter { m ->
+                val after = sentence.substring(m.range.last + 1)
+                val before = sentence.substring(0, m.range.first)
+                STAFF_VERB_AFTER.containsMatchIn(after) && !PREP_BEFORE.containsMatchIn(before) ||
+                    // Anrede nur am Satzanfang ("Gut, Frau Kaiser, …"), nicht "Fallbesprechung Frau Hoffmann, …"
+                    VOCATIVE_LEAD.matches(before) && (after.isNotEmpty() && after[0] in ",?!" || BARE_VOCATIVE.containsMatchIn(after))
+            }.map { formal(it.groupValues[1], it.groupValues[2]) }.toList()
+        }
+    }.toSet()
 
     private fun vocativeName(text: String): String? = ADDRESS.findAll(text).firstOrNull { m ->
         val after = text.substring(m.range.last + 1)
@@ -587,6 +617,25 @@ object TranscriptRules {
         true)
     private val NOT_DONE = rx("\\b(noch offen|nicht erledigt|noch nicht|warte(n)? noch|steht noch aus|fehlt noch|bleibt offen)\\b",
         true)
+
+    private val REPORTED = rx("\\b(?:habe|haben)\\s+(?:ich|wir)\\b(?!.*\\b(?:bis|noch nicht|nicht)\\b).*\\b(?:ge\\p{L}{2,}t|\\p{L}{3,}iert|abgeschlossen|erledigt)\\s*[.!]?$", true)
+
+    /**
+     * Der Belegsatz berichtet nur über bereits Geschehenes ("Für die Fortbildung habe ich den Kurs organisiert."):
+     * daraus folgt keine neue Aufgabe.
+     */
+    fun reportedDone(taskText: String, text: String): Boolean {
+        val sentence = sentenceFor(taskText, text)
+        return REPORTED.containsMatchIn(sentence) && !SELF_COMMIT.containsMatchIn(sentence) &&
+            !REQUEST.containsMatchIn(sentence) && !PLEASE_DO.containsMatchIn(sentence)
+    }
+
+    /** Gemeinsame längere Hauptwörter ("Wäschewagen") */
+    fun sharedNouns(a: String, b: String): Set<String> = longNouns(a) intersect longNouns(b)
+
+    /** Name aus einer Zuweisung im Satz ("Frau Albers übernimmt …"), sonst null */
+    fun assignee(sentence: String): String? = STAFF_DOES.find(sentence)?.let { ADDRESS.find(it.value) }
+        ?.let { formal(it.groupValues[1], it.groupValues[2]) }
 
     /**
      * Offene Aufgaben (Schlüssel -> Text), die laut Transkript erledigt sind: ein Beitrag sagt "erledigt",

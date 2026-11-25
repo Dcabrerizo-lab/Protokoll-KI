@@ -26,7 +26,7 @@ GOLD = {
     "zwei_personen": dict(
         tasks=[
             dict(match=[["dienstplan"]], owner=["kaiser"], due=["25.11.2026", "mittwoch"]),
-            dict(match=[["einlad"], ["weihnacht"], ["laden", "alle"]], owner=["kaiser"], due=["27.11.2026", "ende der woche"]),
+            dict(match=[["einlad"], ["weihnacht"], ["laden", "alle"], ["lädt", "alle"]], owner=["kaiser"], due=["27.11.2026", "ende der woche"]),
             dict(match=[["nachtdienst"]], owner=["@T"], due=[], optional=True),
         ],
         names=["Kaiser"], not_sensitive=["kaiser"],
@@ -72,7 +72,7 @@ GOLD = {
         ],
         structure=["Fall"],
         names=["Krüger", "Schmidt", "Yilmaz"],
-        sensitive=[["krüger"], ["lindenstr"], ["0170", "null eins sieben", "1234567", "1 2 3 4"]],
+        sensitive=[["krüger"], ["lindenstr", "linden str"], ["0170", "null eins sieben", "1234567", "1 2 3 4"]],
         not_sensitive=["schmidt", "yilmaz"],
     ),
     "uebergabe": dict(

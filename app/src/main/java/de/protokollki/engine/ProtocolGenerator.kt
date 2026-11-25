@@ -158,6 +158,9 @@ class ProtocolGenerator(private val model: TextModel) {
         // Einzelne Wörter ("Verschiedenes") sind keine Aufgaben
         var tasks = refine(raws.flatMap { r -> runCatching { parseTasks(r, n) }.getOrDefault(emptyList()) }
             .filter { it.text.trim().contains(' ') })
+            // Beleg berichtet nur Erledigtes ("habe ich organisiert") und enthält keine Zusage: keine Aufgabe
+            .filterNot { t -> t.ref in segments.indices && commitments.none { it.ref == t.ref } &&
+                TranscriptRules.reportedDone(t.text, segments[t.ref].text) }
 
         // Aufgaben-Nachfassen ohne zusätzliche Modellrunde: Zusagen und Aufträge im Transkript, die keine
         // Aufgabe abdeckt (kleine Modelle übersehen sie oft), werden regelbasiert als Aufgabe formuliert.
@@ -189,8 +192,16 @@ class ProtocolGenerator(private val model: TextModel) {
             TranscriptRules.completedFromTranscript(open, segments).forEach { (k, ref) -> doneKeys.putIfAbsent(k, ref) }
         }
         val completed = openTasks.filter { it.key in doneKeys }
-        val finalTasks = dedupe(tasks)
-        val staff = (known.values + invited + finalTasks.map { it.owner })
+        val finalTasks = dedupe(tasks).let { all ->
+            // Gleiche Person, gleicher Gegenstand: die Aufgabe mit Zusage im Beleg ersetzt die ohne
+            fun committed(t: TaskItem) = commitments.any { it.ref == t.ref }
+            all.filterNot { t -> !GENERIC.matches(t.owner) && !committed(t) && all.any { u -> u !== t &&
+                u.owner.equals(t.owner, true) && committed(u) && TranscriptRules.sharedNouns(t.text, u.text).isNotEmpty() } }
+        }
+        // Team = Sprechende, Eingeladene und ausdrücklich Beauftragte. Verantwortliche aus der Modellausgabe zählen
+        // nicht automatisch dazu: kleine Modelle tragen dort auch Klientinnen und Klienten ein.
+        val assigned = TranscriptRules.staffNames(segments)
+        val staff = (known.values + invited + assigned + finalTasks.map { it.owner }.filter { o -> known.values.any { it.equals(o, true) } })
             .flatMap { it.lowercase().split(' ') }.filter { it.length >= 3 && it !in setOf("frau", "herr", "person") }.toSet()
         if (wantSummary) summary = refineSummary(summary, segments, agenda, template, finalTasks, staff)
         val sensitive = (raws.flatMap { parseSensitive(it, voices + invited) } +
@@ -333,6 +344,8 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
         private val ADDRESS = Regex("\\b(Frau|Herr|Herrn)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})")
         private val TASK_NAME = Regex("(?<!für |mit |von |bei |an |zu |über |um |gegen |ohne |und )\\b(Frau|Herr)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})")
         private val STAFF_ACTION = Regex("\\b(?:Frau|Herr)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})\\s+(?:übernimmt|organisiert|beantragt|kümmert sich|klärt|erstellt|bestellt|fordert|ruft|schreibt|meldet|prüft|kontaktiert|informiert|vereinbart|besorgt|holt|plant|dokumentiert|trägt)(?![\\p{L}])")
+        /** "Person 2: …", "Frau Kaiser: …" – Sprecherzeile aus dem Transkript übernommen */
+        private val SPEAKER_PREFIX = Regex("^\\s*(?:Person \\d+|Sprecher(?:in)? \\d+|(?:Frau|Herr)\\s+(?:Dr\\.\\s+)?[A-ZÄÖÜ][\\p{L}-]{1,30})\\s*:\\s*")
         private val DEFAULT_LABEL = Regex("^(Person|Sprecher(in)?) \\d+$")
         private val GENERIC = Regex("^(Person \\d+|Sprecher(in)? \\d+|offen|unklar|unbekannt|keine angabe|niemand|alle|team|ich|sie|du|wir|er|ihr|-|n/?a|)$", RegexOption.IGNORE_CASE)
 
@@ -368,7 +381,12 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
             val invented = !GENERIC.matches(o) && mentioned != null &&
                 o.split(' ').filter { it.length >= 3 && it.lowercase() !in setOf("frau", "herr", "herrn", "dr.") }
                     .let { w -> w.isNotEmpty() && w.none { mentioned.contains(it.lowercase()) } }
-            if (!GENERIC.matches(o) && !invented) return owner
+            if (!GENERIC.matches(o) && !invented) {
+                // Belegsatz weist ausdrücklich jemand anderem zu: der Beleg gewinnt
+                val explicit = TranscriptRules.explicitOwner(ref, segments, known, taskText)
+                return if (explicit != null && !explicit.equals(o, true) &&
+                    explicit.substringAfterLast(' ').lowercase() !in o.lowercase()) explicit else owner
+            }
             // Name steht in der Aufgabe selbst ("Herr Wagner klärt die Telefonanlage"), nicht als Empfänger ("für Herrn X")
             TASK_NAME.find(taskText.substringBefore("("))?.takeIf { m ->
                 m.range.first == 0 || TranscriptRules.assignedName(taskText.substring(m.range.first)) != null
@@ -401,13 +419,20 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
          */
         internal fun checkRef(taskText: String, ref: Int, segments: List<Segment>,
                               commitments: List<TranscriptRules.Commitment> = emptyList()): Int {
-            var r = if (ref !in segments.indices) locateRef(taskText, segments)
-            else if ((words(taskText) intersect words(segments[ref].text)).isNotEmpty()) ref
-            else locateRef(taskText, segments).takeIf { it >= 0 } ?: ref
+            val own = if (ref in segments.indices) (words(taskText) intersect words(segments[ref].text)).size else 0
+            val best = locateRef(taskText, segments)
+            val bestScore = if (best >= 0) (words(taskText) intersect words(segments[best].text)).size else 0
+            var r = if (ref !in segments.indices) best
+            // Nachbarzeile vertauscht: ein anderer Beitrag passt deutlich besser (zwei Wörter mehr)
+            else if (own > 0 && bestScore < own + 2) ref
+            else best.takeIf { it >= 0 } ?: ref
             val w = words(taskText)
             fun shared(c: TranscriptRules.Commitment) = w.count { c.sentence.lowercase().contains(it) }
             if (commitments.none { it.ref == r && shared(it) >= 1 }) {
                 commitments.filter { shared(it) >= 2 }.maxByOrNull { shared(it) }?.let { r = it.ref }
+                    // Ohne Beleg: genau eine Zusage mit einem gemeinsamen Wort ("Kundendienst")
+                    ?: if (r !in segments.indices) commitments.filter { shared(it) >= 1 }.map { it.ref }.distinct()
+                        .singleOrNull()?.let { r = it } else Unit
             }
             return r
         }
@@ -417,7 +442,9 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
          * sonst eine eindeutige "bis …"-Angabe aus dem Beleg, sonst "offen". Zahlwörter werden zu Ziffern.
          */
         internal fun checkDue(t: TaskItem, segments: List<Segment>, meeting: java.time.LocalDate): String {
-            val seg = segments.getOrNull(t.ref) ?: return TranscriptRules.normalizeDue(t.due)
+            val seg = segments.getOrNull(t.ref) ?: return t.due.takeIf { d -> d == "offen" ||
+                TranscriptRules.dueSupported(d, segments.joinToString(" ") { it.text }) }
+                ?.let { TranscriptRules.normalizeDue(it) } ?: "offen"
             val context = (t.ref - 1..t.ref + 1).mapNotNull { segments.getOrNull(it)?.text }.joinToString(" ")
             if (t.due != "offen" && TranscriptRules.dueSupported(t.due, context)) return TranscriptRules.normalizeDue(t.due)
             val sentence = sentenceFor(t.text, seg.text)
@@ -440,6 +467,9 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
         internal fun covers(t: TaskItem, c: TranscriptRules.Commitment, segments: List<Segment>): Boolean {
             // Wortanfänge auch innerhalb von Zusammensetzungen ("reserv" in "Busreservierung")
             val sentence = c.sentence.lowercase()
+            // Ausdrücklich jemand anderem zugewiesen ("Frau Albers übernimmt …"): eigene Aufgabe
+            if (t.ref != c.ref && TranscriptRules.assignee(c.sentence)?.substringAfterLast(' ')?.lowercase()
+                    ?.let { it !in t.owner.lowercase() } == true) return false
             val shared = words(t.text).count { sentence.contains(it) }
             return shared >= 2 || (shared >= 1 && t.ref in (c.ref - 1)..(c.ref + 1))
         }
@@ -602,6 +632,7 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
             return (0 until arr.length()).mapNotNull {
                 val t = arr.optJSONObject(it) ?: return@mapNotNull null
                 val (text, ref) = splitRef(t.optString("aufgabe"), segmentCount)
+                    .let { (x, r) -> x.replace(SPEAKER_PREFIX, "").replaceFirstChar { c -> c.uppercase() } to r }
                 if (text.isEmpty()) return@mapNotNull null
                 fun norm(v: String) = splitRef(v, 0).first.ifEmpty { "offen" }.let {
                     if (it.equals("unbekannt", true) || it == "-" || it.equals("n/a", true) ||

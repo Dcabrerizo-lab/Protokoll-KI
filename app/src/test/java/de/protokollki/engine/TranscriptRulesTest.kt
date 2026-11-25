@@ -271,4 +271,32 @@ class TranscriptRulesTest {
             0 to "Gut, dann klären wir das nächste Woche. Dann treffen wir uns in vier Wochen wieder.")
         assertEquals(listOf("Wir bestellen bei der Firma Lindner." to 0), TranscriptRules.explicitDecisions(s))
     }
+
+    @Test
+    fun staffOnlyFromDirectAddressOrAssignment() {
+        val s = segs(
+            0 to "Fallbesprechung Frau Hoffmann, vierundachtzig Jahre, Pflegegrad drei.",
+            1 to "Gut, Frau Kaiser, können Sie das übernehmen? Bei Herrn Krüger, der gestürzt ist, waren wir gestern.",
+            0 to "Herr Neumann übernimmt das Assessment.",
+        )
+        assertEquals(setOf("Frau Kaiser", "Herr Neumann"), TranscriptRules.staffNames(s))
+    }
+
+    @Test
+    fun explicitAssignmentBeatsModelOwner() {
+        val s = segs(1 to "Ich dokumentiere die Vitalzeichen täglich.", 0 to "Evaluation der Pflegeplanung in zwei Wochen, Herr Neumann übernimmt das Assessment.")
+        assertEquals("Herr Neumann", TranscriptRules.explicitOwner(1, s, emptyMap(), "Evaluation der Pflegeplanung in zwei Wochen"))
+        // Selbstverpflichtung nur mit bekanntem Namen
+        assertNull(TranscriptRules.explicitOwner(0, s, emptyMap(), "Vitalzeichen täglich dokumentieren"))
+        assertEquals("Frau Wolf", TranscriptRules.explicitOwner(0, s, mapOf(1 to "Frau Wolf"), "Vitalzeichen täglich dokumentieren"))
+    }
+
+    @Test
+    fun reportsOfDoneWorkAreNoTasks() {
+        assertTrue(TranscriptRules.reportedDone("Erste-Hilfe-Kurs organisieren", "Für die Fortbildung habe ich den Erste-Hilfe-Kurs am zwölften Februar organisiert."))
+        assertEquals(false, TranscriptRules.reportedDone("Plan erstellen", "Den Plan habe ich noch nicht erstellt."))
+        assertEquals(false, TranscriptRules.reportedDone("Plan erstellen", "Ich erstelle den Plan bis Freitag."))
+        assertEquals("Frau Albers", TranscriptRules.assignee("Frau Albers übernimmt die Elternbriefe."))
+        assertEquals(setOf("wäschewagen"), TranscriptRules.sharedNouns("Wäschewagen organisieren", "Zwei Angebote für Wäschewagen einholen"))
+    }
 }
