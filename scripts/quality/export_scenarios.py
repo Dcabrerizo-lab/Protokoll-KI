@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "e2e", "scenarios"))
 sys.path.insert(0, HERE)
 from scenarios import LONG_PARTS, SCENARIOS, STRESS, VOCABULARY  # noqa: E402
 from gold import GOLD, HARD, NORMAL, OPEN_TASKS  # noqa: E402
+from holdout import HOLDOUT  # noqa: E402
 
 # Teilnehmerliste, wie sie Nutzer vorab eingeben würden (nur Namen, die im Gespräch als Teilnehmende vorkommen)
 PARTICIPANTS = {
@@ -90,6 +91,9 @@ def main(path):
         segs, letters = build(base, sc["lines"])
         out.append(entry(name, sc, asr(segs), letters, GOLD[base], "hart", VOCABULARY.get(base, []),
                          PARTICIPANTS.get(base, [])))
+    for name, sc in HOLDOUT.items():
+        segs, letters = build(name, sc["lines"])
+        out.append(entry(name, sc, segs, letters, sc["gold"], "neu", sc["vocabulary"], sc["participants"]))
     json.dump(out, open(path, "w"), ensure_ascii=False, indent=1)
     print(f"{len(out)} Szenarien -> {path}")
 

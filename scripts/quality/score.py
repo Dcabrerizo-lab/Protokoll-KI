@@ -6,6 +6,7 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gold import GOLD  # noqa: E402
+from holdout import HOLDOUT  # noqa: E402
 import export_scenarios  # noqa: E402,F401  (nur für gleiche Pfade)
 
 NUMWORDS = {"1": ["1", "eine", "einer", "eins"], "2": ["2", "zwei"], "3": ["3", "drei"], "4": ["4", "vier"],
@@ -19,6 +20,8 @@ METRICS = [("tasks", "Aufgaben gefunden"), ("precision", "Aufgaben ohne Fehlgrif
 def gold_for(name):
     if name in GOLD:
         return GOLD[name]
+    if name in HOLDOUT:
+        return HOLDOUT[name]["gold"]
     if name.startswith("asr_"):
         return GOLD[name[4:]]
     if name == "lang":
@@ -183,7 +186,7 @@ def main():
         per.append((r["stage"], r["variant"], r["scenario"], tot, r.get("ms", 0), r.get("llm_calls", 0), notes))
     stages = sorted({k[0] for k in agg}, key=lambda x: ["kompakt", "standard", "premium", "ultra"].index(x.split("-")[0]) if x.split("-")[0] in ["kompakt", "standard", "premium", "ultra"] else 9)
     for v in sorted({k[1] for k in agg}, reverse=True):
-        for grp in ["normal", "hart"]:
+        for grp in ["normal", "hart", "neu"]:
             keys = [(st, v, grp) for st in stages if (st, v, grp) in agg]
             if not keys:
                 continue
