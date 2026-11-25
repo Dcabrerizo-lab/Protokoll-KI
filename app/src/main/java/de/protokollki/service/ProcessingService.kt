@@ -174,8 +174,15 @@ class ProcessingService : LifecycleService() {
         else raw.map { it.copy(text = de.protokollki.engine.Vocabulary.correct(it.text, vocab)) }
         // Nur Sprecher behalten, die tatsächlich Text haben
         val used = segments.map { it.speakerId }.toSet()
+        // Namen aus dem Gespräch („Mein Name ist …“, „Frau Schmidt, …?“) für noch unbenannte Sprecher
+        val guessed = runCatching { de.protokollki.engine.SpeakerNaming.guess(segments, meeting.participants) }
+            .getOrDefault(emptyMap())
+        val named = speakers.map { s ->
+            val g = guessed[s.id]
+            if (g != null && s.profileId == null && s.name.startsWith("Person ")) s.copy(name = g) else s
+        }
         MeetingRepository.update(id) {
-            it.copy(segments = segments, speakers = speakers.filter { s -> s.id in used })
+            it.copy(segments = segments, speakers = named.filter { s -> s.id in used })
         }
         if (segments.isEmpty()) throw IllegalStateException("In der Aufnahme wurde keine Sprache erkannt.")
     }
