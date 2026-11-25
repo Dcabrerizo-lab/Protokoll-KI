@@ -218,4 +218,47 @@ class ProtocolGeneratorTest {
         assertTrue(short.length < text.length * 0.6)
         (1..3).forEach { assertTrue(short.contains("Notizen zu Teil $it:")) }
     }
+
+    @Test
+    fun rulesCompleteSmallModelOutput() {
+        // Kleine Modelle: Sprecherbezeichnung als Verantwortliche, Abstimmung ohne Ergebnis, nichts erledigt
+        val segs = listOf(
+            Segment(0, 0f, 3f, "Zum Ausflug: Wir stimmen ab: Ausflug in den Zoo im Mai. Wer ist dafür? Sechs. Dagegen? Keiner. Der Antrag ist angenommen."),
+            Segment(1, 3f, 5f, "Ich kümmere mich um die Busreservierung, bis Ende April."),
+            Segment(0, 5f, 8f, "Danke, Herr Okafor. Die Gästeliste liegt übrigens vor, das ist erledigt."),
+        )
+        val spk = listOf(Speaker(0, "Person 1"), Speaker(1, "Person 2"))
+        val answer = """{"zusammenfassung": "Ausflug geplant.", "themen": [{"titel": "Ausflug", "punkte": ["Zoo im Mai. [0]"]}],
+            "beschluesse": ["Ausflug in den Zoo im Mai. [0]"], "offene_punkte": [],
+            "aufgaben": [{"aufgabe": "Bus reservieren [1]", "verantwortlich": "Person 2", "frist": "offen"}],
+            "erledigte_aufgaben": [], "sensible_daten": []}"""
+        val model = FakeModel { _, _ -> answer }
+        val r = ProtocolGenerator(model).generate("Verein", monday, segs, spk, wantSummary = true,
+            openTasks = listOf(ProtocolGenerator.OpenTask("A1", "t1", "m0", "Gästeliste erstellen", "Herr Okafor"),
+                ProtocolGenerator.OpenTask("A2", "t2", "m0", "Kasse prüfen", "Frau Wolf"))) { _, _ -> true }
+        assertEquals(1, model.prompts.size)                                     // keine zusätzliche LLM-Runde
+        assertTrue(model.prompts[0].contains("[1] Herr Okafor: Ich kümmere mich"))  // Name aus "Danke, Herr Okafor"
+        assertEquals("Herr Okafor", r.tasks.single().owner)
+        assertEquals("Fr., 30.04.2027", r.tasks.single().due)                    // Frist aus dem Beleg
+        assertEquals(listOf("Ausflug in den Zoo im Mai – Abstimmung: 6 Ja, 0 Nein, angenommen."), r.summary.decisions)
+        assertEquals(listOf("t1"), r.completed.map { it.taskId })
+    }
+
+    @Test
+    fun participantsReachHeaderAndAreNeverSensitive() {
+        val model = FakeModel { _, _ -> summaryJson.replace("\"Frau Schulz\"", "\"Herr Wagner\"") }
+        val r = ProtocolGenerator(model).generate("Team", monday, segments, listOf(Speaker(0, "Person 1"), Speaker(1, "Person 2")),
+            wantSummary = true, participants = listOf("Frau Becker", "Herr Wagner")) { _, _ -> true }
+        assertTrue(model.prompts.single().contains("Teilnehmende laut Einladung: Frau Becker, Herr Wagner"))
+        assertTrue(r.sensitiveTerms.toString(), r.sensitiveTerms.none { it.contains("Wagner") || it.contains("Becker") })
+    }
+
+    @Test
+    fun staffDoingTasksAreNotClients() {
+        val segs = listOf(
+            Segment(0, 0f, 3f, "Fallbesprechung Frau Hoffmann, Pflegegrad drei."),
+            Segment(1, 3f, 5f, "Frau Wolf fordert die Verordnung an, Herr Neumann übernimmt das Assessment."),
+        )
+        assertEquals(listOf("Hoffmann"), ProtocolGenerator.addressedClients(segs, emptyList()))
+    }
 }

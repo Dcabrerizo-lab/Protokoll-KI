@@ -1,0 +1,192 @@
+package de.protokollki.engine
+
+import de.protokollki.data.Segment
+import de.protokollki.data.Topic
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.time.LocalDate
+
+class TranscriptRulesTest {
+    private fun segs(vararg s: Pair<Int, String>) = s.mapIndexed { i, (spk, t) -> Segment(spk, i * 5f, i * 5f + 4f, t) }
+    private val label = { id: Int -> "Person ${id + 1}" }
+    private val monday = LocalDate.of(2026, 11, 23)
+
+    // ------------------------------------------------------------ Abstimmungen
+
+    @Test
+    fun detectsVoteWithCountsAndSubject() {
+        val s = segs(
+            0 to "Wir kommen zur Abstimmung über den Antrag: Anschaffung eines neuen Dienstwagens. Wer ist dafür? Acht. Wer ist dagegen? Zwei. Enthaltungen? Keine. Der Antrag ist angenommen.",
+        )
+        val v = TranscriptRules.detectVotes(s).single()
+        assertTrue(v.accepted)
+        assertEquals(8, v.yes); assertEquals(2, v.no); assertEquals(0, v.abstain)
+        assertEquals(0, v.ref)
+    }
+
+    @Test
+    fun voteSubjectFromStimmenAbAndCountsAcrossSegments() {
+        val s = segs(
+            0 to "Dann stimmen wir ab: Neue Öffnungszeiten ab Januar. Wer ist dafür?",
+            1 to "Drei Stimmen.",
+            0 to "Wer ist dagegen? Vier. Damit ist der Vorschlag abgelehnt.",
+        )
+        val v = TranscriptRules.detectVotes(s).single()
+        assertEquals("Neue Öffnungszeiten ab Januar", v.subject)
+        assertEquals(false, v.accepted)
+        assertEquals(4, v.no)
+        assertEquals(3, v.yes)
+        assertEquals("Neue Öffnungszeiten ab Januar – Abstimmung: 3 Ja, 4 Nein, abgelehnt.", v.text())
+    }
+
+    @Test
+    fun voteSubjectGetsAgendaItemAndUnanimous() {
+        val s = segs(
+            0 to "Nächster Punkt, die Satzungsänderung. Wer ist für die neue Fassung von Paragraf drei?",
+            1 to "Alle.",
+            0 to "Dann ist das einstimmig angenommen.",
+        )
+        val v = TranscriptRules.detectVotes(s).single()
+        assertTrue(v.unanimous)
+        assertEquals("Satzungsänderung: Neue Fassung von Paragraf drei – einstimmig angenommen.", v.text())
+    }
+
+    @Test
+    fun angenommenOutsideVoteIsIgnored() {
+        val s = segs(0 to "Ich hatte angenommen, dass die Lieferung schon da ist.",
+            1 to "Das Paket wurde gestern angenommen.")
+        assertTrue(TranscriptRules.detectVotes(s).isEmpty())
+    }
+
+    @Test
+    fun mergeAddsResultToMatchingDecisionOrAppends() {
+        val votes = listOf(
+            TranscriptRules.Vote("Sommerfest am vierzehnten Juni mit Budget von zweitausend Euro", true, false, 5, 1, 1, 4),
+            TranscriptRules.Vote("Mitgliedsbeitrag: Erhöhung auf vierzig Euro", false, false, 2, 4, 1, 8),
+        )
+        val (d, r) = TranscriptRules.mergeVotes(listOf("Das Sommerfest findet am 14. Juni im Stadtpark statt, Budget 2000 Euro."), listOf(4), votes)
+        assertEquals("Das Sommerfest findet am 14. Juni im Stadtpark statt, Budget 2000 Euro – Abstimmung: 5 Ja, 1 Nein, 1 Enthaltung, angenommen.", d[0])
+        assertEquals("Mitgliedsbeitrag: Erhöhung auf vierzig Euro – Abstimmung: 2 Ja, 4 Nein, 1 Enthaltung, abgelehnt.", d[1])
+        assertEquals(listOf(4, 8), r)
+    }
+
+    @Test
+    fun mergeCorrectsWrongResultAndKeepsCompleteOnes() {
+        val v = listOf(TranscriptRules.Vote("Erhöhung des Beitrags", false, false, 2, 4, null, 3))
+        val (d, _) = TranscriptRules.mergeVotes(listOf("Erhöhung des Beitrags angenommen."), listOf(3), v)
+        assertEquals("Erhöhung des Beitrags – Abstimmung: 2 Ja, 4 Nein, abgelehnt.", d.single())
+        val ok = "Erhöhung des Beitrags – Abstimmung: 2 Ja, 4 Nein, abgelehnt."
+        assertEquals(ok, TranscriptRules.mergeVotes(listOf(ok), listOf(3), v).first.single())
+    }
+
+    // ------------------------------------------------------------ Wer ist wer
+
+    @Test
+    fun speakerNamesFromDirectAddress() {
+        val s = segs(
+            0 to "Frau Brandt, können Sie bitte die Liste aktualisieren?",
+            1 to "Ja, mache ich.",
+            2 to "Ich übernehme die Bestellung bis Freitag.",
+            0 to "Danke, Herr Okafor. Dann zum nächsten Punkt.",
+        )
+        assertEquals(mapOf(1 to "Frau Brandt", 2 to "Herr Okafor"), TranscriptRules.speakerNames(s))
+    }
+
+    @Test
+    fun thirdPersonMentionsDoNotNameSpeakers() {
+        val s = segs(
+            0 to "Wir besprechen heute Herrn Krüger aus der Lindenstraße.",
+            1 to "Frau Schmidt beantragt die Höherstufung.",
+            0 to "Danke. Frau Lange, holen Sie bitte Angebote ein.",
+            2 to "Ja, das übernehme ich.",
+        )
+        // "Danke." mit Punkt gehört nicht zur Anrede: Frau Lange ist, wer danach spricht
+        assertEquals(mapOf(2 to "Frau Lange"), TranscriptRules.speakerNames(s))
+    }
+
+    @Test
+    fun conflictingEvidenceGivesNoName() {
+        val s = segs(
+            0 to "Frau Kaiser, übernehmen Sie das?", 1 to "Ja.",
+            0 to "Frau Becker, können Sie das prüfen?", 1 to "Ja.",
+        )
+        assertTrue(TranscriptRules.speakerNames(s).isEmpty())
+    }
+
+    @Test
+    fun ownerFromSelfCommitmentRequestAndSentence() {
+        val s = segs(
+            0 to "Die Nachtdienste übernehme ich selbst. Können Sie den Dienstplan bis Mittwoch aushängen?",
+            1 to "Ja, mache ich.",
+            2 to "Ich kümmere mich um die Genehmigung beim Ordnungsamt.",
+        )
+        val names = mapOf(1 to "Frau Kaiser")
+        assertEquals("Frau Kaiser", TranscriptRules.ownerFromRef(0, s, names, label, "Dienstplan aushängen"))
+        assertEquals("Person 1", TranscriptRules.ownerFromRef(0, s, names, label, "Nachtdienste übernehmen"))
+        assertEquals("Person 3", TranscriptRules.ownerFromRef(2, s, names, label, "Genehmigung beim Ordnungsamt einholen"))
+        assertNull(TranscriptRules.ownerFromRef(5, s, names, label, "x"))
+    }
+
+    // ------------------------------------------------------------ Fristen, erledigt
+
+    @Test
+    fun deadlineOnlyWhenUnambiguous() {
+        assertEquals("Freitag", TranscriptRules.deadlineFromRef("Können Sie bis Freitag drei Angebote einholen?", monday))
+        assertEquals("Ende Januar", TranscriptRules.deadlineFromRef("Klären Sie das bis Ende Januar mit dem Anbieter.", monday))
+        assertEquals("zur nächsten Sitzung", TranscriptRules.deadlineFromRef("Er erstellt bis zur nächsten Sitzung einen Entwurf.", monday))
+        assertNull(TranscriptRules.deadlineFromRef("Bis Freitag die Angebote und bis Montag die Liste.", monday))
+        assertNull(TranscriptRules.deadlineFromRef("Das dauert bis auf Weiteres.", monday))
+    }
+
+    @Test
+    fun completedAndStillOpen() {
+        val open = mapOf("A1" to "Drei Angebote für die Möbel einholen", "A2" to "Telefonanlage mit dem Anbieter klären")
+        val s = segs(
+            1 to "Die drei Angebote für die Möbel liegen vor, das ist erledigt.",
+            0 to "Herr Wagner, wie sieht es mit der Telefonanlage beim Anbieter aus?",
+            2 to "Da warte ich noch auf den Rückruf. Das ist noch offen.",
+        )
+        assertEquals(mapOf("A1" to 0), TranscriptRules.completedFromTranscript(open, s))
+        assertTrue(TranscriptRules.stillOpen(open.getValue("A2"), s))
+        assertEquals(false, TranscriptRules.stillOpen(open.getValue("A1"), s))
+    }
+
+    // ------------------------------------------------------------ Gliederung, sensible Daten
+
+    @Test
+    fun alignsTopicsToAgenda() {
+        val agenda = listOf("Begrüßung und Formalien", "Sommerfest", "Mitgliedsbeitrag", "Verschiedenes")
+        val topics = listOf(
+            Topic("Eröffnung und Formalien", listOf("Beschlussfähig."), listOf(0)),
+            Topic("Planung Sommerfest", listOf("Budget 2000 Euro."), listOf(2)),
+            Topic("Erhöhung des Mitgliedsbeitrags", listOf("Abgelehnt."), listOf(8)),
+            Topic("Vereinszeitung", listOf("Artikel bis Januar."), listOf(9)),
+            Topic("Sommerfest Genehmigung", listOf("Ordnungsamt."), listOf(5)),
+        )
+        val out = TranscriptRules.alignAgenda(topics, agenda)
+        assertEquals(listOf("TOP 1: Begrüßung und Formalien", "TOP 2: Sommerfest", "TOP 3: Mitgliedsbeitrag", "TOP 4: Verschiedenes"),
+            out.map { it.title })
+        assertEquals(listOf("Budget 2000 Euro.", "Ordnungsamt."), out[1].points)
+        assertEquals(listOf(2, 5), out[1].refs)
+    }
+
+    @Test
+    fun agendaWithoutMiscKeepsUnmatchedTopics() {
+        val out = TranscriptRules.alignAgenda(listOf(Topic("Urlaub", listOf("x"))), listOf("Umzug", "Touren"))
+        assertEquals("Urlaub", out.single().title)
+    }
+
+    @Test
+    fun findsAddressesAndPhoneNumbers() {
+        val s = segs(
+            0 to "Herr Krüger wohnt in der Lindenstraße zwölf, seine Tochter ist unter der Nummer null eins sieben null, eins zwei drei vier fünf sechs sieben erreichbar.",
+            1 to "Das neue Büro ist in der Hauptstraße. Das war ein Hering.",
+        )
+        val found = TranscriptRules.addressesAndPhones(s)
+        assertTrue(found.toString(), found.contains("Lindenstraße zwölf"))
+        assertTrue(found.toString(), found.any { it.startsWith("null eins sieben null") })
+        assertEquals(2, found.size)
+    }
+}

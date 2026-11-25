@@ -11,7 +11,8 @@ sourceSets {
             srcDir("src")
             srcDir(app)
             include("de/protokollki/eval/**", "de/protokollki/hoststub/**",
-                "de/protokollki/engine/ProtocolGenerator.kt", "de/protokollki/engine/DateResolver.kt",
+                "de/protokollki/engine/ProtocolGenerator.kt", "de/protokollki/engine/TranscriptRules.kt",
+                "de/protokollki/engine/DateResolver.kt",
                 "de/protokollki/engine/Vocabulary.kt", "de/protokollki/data/Model.kt")
         }
     }
