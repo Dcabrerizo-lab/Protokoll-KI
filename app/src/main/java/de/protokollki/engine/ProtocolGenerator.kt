@@ -60,15 +60,18 @@ class ProtocolGenerator(private val model: TextModel) {
         openTasks: List<OpenTask> = emptyList(),
         template: ProtocolTemplate = ProtocolTemplate.ALLGEMEIN,
         vocabulary: List<String> = emptyList(),
+        participants: List<String> = emptyList(),
         progress: Progress,
     ): Result {
         val names = speakers.associate { it.id to it.name }
         fun nameOf(id: Int) = names[id] ?: "Person ${id + 1}"
         val lines = segments.mapIndexed { i, s -> "[$i] ${nameOf(s.speakerId)}: ${s.text}" }
-        val participants = segments.map { nameOf(it.speakerId) }.distinct()
+        val invited = participants.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        val voices = segments.map { nameOf(it.speakerId) }.distinct()
         val date = SimpleDateFormat("EEEE, dd.MM.yyyy", Locale.GERMAN).format(Date(dateMillis))
         val header = buildString {
-            append("Besprechung: $title\nDatum: $date\nTeilnehmende: ${participants.joinToString(", ")}")
+            append("Besprechung: $title\nDatum: $date\nTeilnehmende: ${voices.joinToString(", ")}")
+            if (invited.isNotEmpty()) append("\nTeilnehmende laut Einladung: ${invited.joinToString(", ")}")
             if (template != ProtocolTemplate.ALLGEMEIN) append("\nArt: ${template.label}")
             if (vocabulary.isNotEmpty()) {
                 append("\nRichtige Schreibweise von Namen und Fachbegriffen: ")
@@ -160,7 +163,7 @@ class ProtocolGenerator(private val model: TextModel) {
         raws.forEach { r -> runCatching { parseCompleted(r, n) }.getOrDefault(emptyList()).forEach { (k, ref) -> doneKeys.putIfAbsent(k, ref) } }
         val completed = openTasks.filter { it.key in doneKeys }
         val finalTasks = dedupe(tasks)
-        val sensitive = (raws.flatMap { parseSensitive(it, participants) } +
+        val sensitive = (raws.flatMap { parseSensitive(it, voices + invited) } +
             if (template == ProtocolTemplate.FALLBESPRECHUNG || template == ProtocolTemplate.UEBERGABE)
                 addressedClients(segments, finalTasks) else emptyList())
             .distinctBy { it.lowercase() }
