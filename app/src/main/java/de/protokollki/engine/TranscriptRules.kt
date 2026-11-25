@@ -367,11 +367,22 @@ object TranscriptRules {
 
     private val DECIDED = rx("\\b(?:beschließen wir|ist beschlossen|haben wir beschlossen|entscheiden wir|legen wir fest|wird beschlossen|(?:haben wir|wir haben) (?:entschieden|beschlossen|festgelegt)(?:,?\\s*dass)?)\\s*[:,]?\\s*(.*)$", true)
 
-    /** Ausdrücklich gefasste Beschlüsse ("Dann beschließen wir: …") mit Inhalt und Beleg. */
+    /** "Dann bestellen wir bei Holzmann." – Festlegung der Runde (keine Verfahrensschritte wie "dann schauen wir") */
+    private val WE_DECIDE = rx("^(?:gut|okay|prima|danke)?\\s*[,.]?\\s*(?:dann|also)\\s+(\\p{L}+en)\\s+wir\\s+(.{4,})$", true)
+    private val PROCEDURE = setOf("schauen", "kommen", "sprechen", "besprechen", "gehen", "beginnen", "fangen", "klären",
+        "sehen", "hören", "stimmen", "schließen", "reden", "starten", "warten", "überlegen", "prüfen", "machen", "treffen",
+        "fahren", "hoffen", "müssen", "können", "sollten", "wollen", "haben", "brauchen", "nehmen")
+
+    /** Ausdrücklich gefasste Beschlüsse ("Dann beschließen wir: …", "Dann bestellen wir bei X.") mit Inhalt und Beleg. */
     fun explicitDecisions(segments: List<Segment>): List<Pair<String, Int>> = segments.flatMapIndexed { i, seg ->
         seg.text.split(rx("(?<=[.?!])\\s+")).mapNotNull { sen ->
-            val body = DECIDED.find(sen)?.groupValues?.get(1)?.trim()?.trimEnd('.', '!', ' ') ?: return@mapNotNull null
-            if (stems(body).size < 2) null else body.replaceFirstChar { it.uppercase() } + "." to i
+            val body = DECIDED.find(sen)?.groupValues?.get(1)?.trim()?.trimEnd('.', '!', ' ')
+            if (body != null) return@mapNotNull if (stems(body).size < 2) null else body.replaceFirstChar { it.uppercase() } + "." to i
+            val we = WE_DECIDE.find(sen.trim().trimEnd('.', '!')) ?: return@mapNotNull null
+            val verb = we.groupValues[1].lowercase()
+            val rest = we.groupValues[2].trim()
+            if (verb in PROCEDURE || rest.startsWith("uns") || rest.contains("?") || stems(rest).isEmpty()) null
+            else "Wir $verb $rest." to i
         }
     }
 

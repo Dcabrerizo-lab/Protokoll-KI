@@ -264,4 +264,11 @@ class TranscriptRulesTest {
         assertEquals(false, TranscriptRules.dueSupported("nach dem Sitzungstermin", "Ich schließe die Sitzung um acht."))
         assertTrue(TranscriptRules.dueSupported("bis zur nächsten Sitzung", "Er erstellt bis zur nächsten Sitzung einen Entwurf."))
     }
+
+    @Test
+    fun weDecideButNotProcedure() {
+        val s = segs(0 to "Danke. Dann bestellen wir bei der Firma Lindner.", 1 to "Dann schauen wir zuerst auf die Liste.",
+            0 to "Gut, dann klären wir das nächste Woche. Dann treffen wir uns in vier Wochen wieder.")
+        assertEquals(listOf("Wir bestellen bei der Firma Lindner." to 0), TranscriptRules.explicitDecisions(s))
+    }
 }
