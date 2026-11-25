@@ -59,7 +59,8 @@ for key, label in (("kurz", "Besprechung 69 s"), ("lang", "Lange Besprechung 4,7
             f"{g(key + '.sprecher')} Sprecher, {g(key + '.aufgaben')} Aufgaben · "
             f"App-Speicher max. {g(key + '.max_app_speicher_mb')} MB, "
             f"freier RAM min. {g(key + '.min_frei_ram_mb')} MB"
-            + (" · ⚠️ Speicher knapp" if g(key + ".speicher_knapp") == "true" else ""))
+            + (" · ⚠️ Speicher knapp" if g(key + ".speicher_knapp") == "true" else "")
+            + (f" · Fehlermeldung: {g(key + '.fehler')}" if g(key + ".fehler") not in (None, "", "null") else ""))
 # Zeitmessung je Schritt (App) und je Sprachmodell-Aufruf (nativ), in Reihenfolge des Protokolls
 timing = [m.group(1) + ": " + m.group(2).strip()
           for m in re.finditer(r"PKREPORT ((?:schritt|llm)\.\d+)=(.*)", logcat)]
