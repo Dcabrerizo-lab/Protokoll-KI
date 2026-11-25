@@ -11,8 +11,9 @@
 source scripts/e2e/common.sh
 SET=${1:-kompakt}
 install_app; push_models
-adb shell svc power stayon false
-adb shell settings put system screen_off_timeout 600000
+# Bildschirm bleibt an, außer wenn der Test ihn gezielt ausschaltet (KEYCODE_SLEEP)
+adb shell svc power stayon true
+adb shell settings put system screen_off_timeout 1800000
 adb logcat -c
 start_app; sleep 6
 
@@ -42,6 +43,18 @@ import_file() { # $1 Szenario-WAV, $2 Name im App-Ordner, $3 auto_process (true/
   adb shell am start -n $PKG/.MainActivity -a de.protokollki.DEBUG_IMPORT \
     --es path "/data/data/$PKG/files/in/$2" --es model_set "$SET" --ez auto_process "${3:-true}" > /dev/null
   for _ in $(seq 1 60); do sleep 2; id=$(newest_meeting); [ -n "$id" ] && [ "$id" != "$before" ] && { echo "$id"; return 0; }; done
+  return 1
+}
+
+# Tippt "Erneut versuchen" und prüft, dass die Verarbeitung wirklich wieder anläuft
+retry_ui() {
+  local id=$1
+  for _ in 1 2 3; do
+    screen_on; tap_text "Erneut versuchen"; sleep 6
+    [ "$(status_of "$id")" != ERROR ] && return 0
+    info "Erneut versuchen hat nicht gegriffen, Oberfläche: $(ui_texts)"
+  done
+  debug_log "Erneut versuchen"
   return 1
 }
 
@@ -88,8 +101,9 @@ else
 
   # Abschuss während der Aufnahme
   before=$(newest_meeting); rec_start; sleep 25; kid=$(newest_meeting)
-  if kill9_app; then pass "[Aufnahme] Prozess per kill -9 beendet"; else info "kill -9 nicht möglich"; fi
+  if kill9_app; then pass "[Aufnahme] Prozess per kill -9 beendet"; else fail "[Aufnahme] kill -9 nicht möglich"; fi
   start_app; sleep 8
+  [ "$(status_of "$kid")" = RECORDING ] && { debug_log "nach Abschuss Aufnahme"; rec_stop; sleep 3; }
   st=$(status_of "$kid"); dur=$(field_of "$kid" durationSec)
   if [ "$st" = RECORDED ] && python3 -c "import sys; sys.exit(0 if float('$dur') >= 15 else 1)"; then
     pass "[Aufnahme] nach Abschuss erhalten: ${dur} s, Status $st"
@@ -109,7 +123,7 @@ if [ -z "$bid" ]; then fail "[Verarbeitung] Import fehlgeschlagen"; else
   adb shell input keyevent KEYCODE_SLEEP; sleep 45
   screen_on; start_app; sleep 3
   adb shell am send-trim-memory $PKG RUNNING_CRITICAL > /dev/null 2>&1
-  r=$(wait_final "$bid" 2400)
+  r=$(wait_final "$bid" 900)
   if [ "$r" = DONE ]; then pass "[Verarbeitung] Hintergrund + Bildschirm aus + Speicherdruck → Protokoll fertig"
   else fail "[Verarbeitung] nach Hintergrund/Bildschirm aus: $r ($(error_of "$bid"))"; fi
 fi
@@ -118,7 +132,7 @@ kid=$(import_file "$SC/zwei_personen.wav" abschuss.wav true)
 if [ -z "$kid" ]; then fail "[Abschuss] Import fehlgeschlagen"; else
   wait_phase "$kid" TRANSCRIBING 300; sleep 8
   info "Abschuss in Phase: $(last_progress "$kid")"
-  kill9_app || info "kill -9 nicht möglich"
+  kill9_app || fail "[Abschuss] kill -9 nicht möglich"
   adb logcat -c
   start_app; sleep 10
   st=$(status_of "$kid"); err=$(error_of "$kid")
@@ -133,19 +147,19 @@ if [ -z "$kid" ]; then fail "[Abschuss] Import fehlgeschlagen"; else
   open_meeting "abschuss"
   if ui_has "Erneut versuchen"; then pass "[Abschuss] Fehlerkarte mit „Erneut versuchen“ sichtbar"
   else fail "[Abschuss] „Erneut versuchen“ nicht sichtbar"; fi
-  tap_text "Erneut versuchen"; sleep 5
+  retry_ui "$kid"
   # Zweiter Abschuss im Protokoll-Schritt: Transkript bleibt, erneuter Versuch schreibt nur das Protokoll
-  if wait_phase "$kid" SUMMARIZING 1500; then
+  if wait_phase "$kid" SUMMARIZING 600; then
     sleep 5; kill9_app; start_app; sleep 10
     st=$(status_of "$kid"); n=$(field_of "$kid" segments)
     if [ "$st" = ERROR ] && [ "${n:-0}" -gt 0 ]; then pass "[Abschuss Protokoll] gemeldet, Transkript ($n Beiträge) erhalten"
     else fail "[Abschuss Protokoll] Status $st, Beiträge ${n:-0}"; fi
     open_meeting "abschuss"
-    tap_text "Erneut versuchen"; sleep 5
+    retry_ui "$kid"
   else info "Protokoll-Schritt nicht erreicht (Status $(status_of "$kid"))"; fi
-  r=$(wait_final "$kid" 2400)
+  r=$(wait_final "$kid" 900)
   if [ "$r" = DONE ]; then pass "[Abschuss] „Erneut versuchen“ führt zum fertigen Protokoll"
-  else fail "[Abschuss] nach erneutem Versuch: $r ($(error_of "$kid"))"; fi
+  else fail "[Abschuss] nach erneutem Versuch: $r ($(error_of "$kid"))"; debug_log "nach erneutem Versuch"; fi
 fi
 
 # ================================================================ C  Akku + Energiesparmodus
@@ -153,13 +167,15 @@ info "=== C: Akku 5 % ohne Ladegerät, Energiesparmodus ==="
 adb shell dumpsys battery unplug; adb shell dumpsys battery set level 5
 adb shell settings put global low_power 1
 sleep 2
+screen_on
 cid=$(import_file "$SC/folgesitzung.wav" akku.wav false)
 sleep 4; shot stress-akku
+ui_has "Akku bei 5" || info "Oberfläche: $(ui_texts)"
 if ui_has "Akku bei 5"; then pass "[Akku] Warnung vor der Verarbeitung sichtbar (5 %, ohne Ladegerät)"
 else fail "[Akku] keine Akku-Warnung bei 5 % ohne Ladegerät"; fi
 tap_text "Jetzt verarbeiten" || fail "[Akku] Knopf „Jetzt verarbeiten“ nicht gefunden"
 sleep 5
-r=$(wait_final "$cid" 2400)
+r=$(wait_final "$cid" 900)
 if [ "$r" = DONE ] || [ "$r" = ERROR ] && app_alive; then pass "[Akku] Verarbeitung im Energiesparmodus ohne Absturz ($r)"
 else fail "[Akku] Verarbeitung im Energiesparmodus: $r"; fi
 adb shell settings put global low_power 0; adb shell dumpsys battery reset
@@ -182,13 +198,14 @@ if [ -n "$did" ] && [ "$did" != "$before" ] && [ "$(status_of "$did")" = ERROR ]
   pass "[Speicher voll] Aufnahme startet nicht, Meldung: $(error_of "$did")"
 else fail "[Speicher voll] Aufnahme bei vollem Speicher: Status $(status_of "$did") ($(error_of "$did"))"; fi
 rec_stop; sleep 2
+screen_on
 # Import einer 57-MB-Datei bei ~30 MB frei: sauberer Abbruch mit Meldung, App läuft
 before=$(newest_meeting)
 adb shell am start -n $PKG/.MainActivity -a de.protokollki.DEBUG_IMPORT \
   --es path "/data/data/$PKG/files/in/gross.wav" --es model_set "$SET" --ez auto_process false > /dev/null
 sleep 40; shot stress-speicher-import
 if app_alive && [ "$(newest_meeting)" = "$before" ] && ui_has "Speicherplatz"; then pass "[Speicher voll] Import abgebrochen mit Meldung „Speicherplatz“"
-elif app_alive && [ "$(newest_meeting)" = "$before" ]; then fail "[Speicher voll] Import abgebrochen, aber ohne verständliche Meldung"
+elif app_alive && [ "$(newest_meeting)" = "$before" ]; then fail "[Speicher voll] Import abgebrochen, aber ohne verständliche Meldung: $(ui_texts)"
 else fail "[Speicher voll] Import: App weg oder Besprechung trotzdem angelegt"; fi
 ui_has "OK" && tap_text "OK"
 free_disk

@@ -76,11 +76,21 @@ summary() {
 # ---------------------------------------------------------------- Härtetests (stress.sh, long.sh)
 app_pid() { adb shell pidof $PKG 2>/dev/null | tr -d '\r' | awk '{print $1}'; }
 # Prozess hart beenden wie ein Absturz oder der Speicher-Killer (SIGKILL, kein Aufräumen)
+# Erfolg, wenn der alte Prozess weg ist (Android startet eine sichtbare App evtl. sofort neu → neue PID)
 kill9_app() {
-  local pid; pid=$(app_pid); [ -z "$pid" ] && return 1
-  adb shell "run-as $PKG kill -9 $pid" 2>/dev/null || adb shell "su 0 kill -9 $pid" 2>/dev/null || adb shell kill -9 "$pid"
-  sleep 2; ! app_alive
+  local pid new; pid=$(app_pid); [ -z "$pid" ] && return 1
+  adb shell "run-as $PKG kill -9 $pid" > /dev/null 2>&1
+  sleep 1; new=$(app_pid)
+  if [ -n "$new" ] && [ "$new" = "$pid" ]; then adb shell "su 0 kill -9 $pid" > /dev/null 2>&1; sleep 1; new=$(app_pid); fi
+  [ "$new" != "$pid" ]
 }
+# Verarbeitungs- und Absturzzeilen aus dem Systemprotokoll (zur Fehlersuche im Job-Log)
+debug_log() {
+  echo "----- Systemprotokoll ($1) -----"
+  adb logcat -d -s ProtokollKI-Verarbeitung:* AndroidRuntime:E Recorder:* MeetingRepository:* 2>/dev/null | tail -${2:-25}
+  echo "-----"
+}
+ui_texts() { ui_dump | grep -o ' text="[^"]\+"' | head -40 | tr '\n' ' '; echo; }
 start_app() { adb shell am start -n $PKG/.MainActivity > /dev/null; }
 error_of() { meeting_json "$1" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('error') or '')" 2>/dev/null; }
 field_of() { meeting_json "$1" | python3 -c "import sys,json; v=json.loads(sys.stdin.read()).get('$2'); print(len(v) if isinstance(v,list) else v)" 2>/dev/null; }
