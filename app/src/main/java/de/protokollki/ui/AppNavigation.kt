@@ -52,6 +52,8 @@ import de.protokollki.service.ProcessingService
 import de.protokollki.ui.components.applyTemplate
 import de.protokollki.ui.screens.AskScreen
 import de.protokollki.ui.screens.HomeScreen
+import de.protokollki.ui.screens.LegalDoc
+import de.protokollki.ui.screens.LegalScreen
 import de.protokollki.ui.screens.MeetingScreen
 import de.protokollki.ui.screens.OnboardingScreen
 import de.protokollki.ui.screens.RecordingScreen
@@ -69,6 +71,8 @@ object Routes {
     const val SETTINGS = "settings"
     const val VOICES = "voices"
     const val ASK = "ask"
+    const val LEGAL = "legal/{doc}"
+    fun legal(doc: String) = "legal/$doc"
     const val MEETING = "meeting/{id}?tab={tab}&seg={seg}"
     /**
      * [tab]: optional „tasks“, „transcript“ oder „summary“ – öffnet direkt diesen Reiter.
@@ -244,6 +248,16 @@ fun AppNavigation(
             SettingsScreen(
                 onBack = { nav.popBackStack() },
                 onOpenVoices = { nav.navigate(Routes.VOICES) { launchSingleTop = true } },
+                onOpenLegal = { doc -> nav.navigate(Routes.legal(doc.id)) { launchSingleTop = true } },
+            )
+        }
+        composable(
+            route = Routes.LEGAL,
+            arguments = listOf(navArgument("doc") { type = NavType.StringType }),
+        ) { entry ->
+            LegalScreen(
+                doc = LegalDoc.of(entry.arguments?.getString("doc")),
+                onBack = { nav.popBackStack() },
             )
         }
         composable(Routes.VOICES) {

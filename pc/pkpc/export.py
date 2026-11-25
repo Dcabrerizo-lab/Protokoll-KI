@@ -10,7 +10,7 @@ from pathlib import Path
 from .model import PROTOCOL_MODES, Meeting, template_of
 from .paths import resource
 
-FOOTER_NOTE = "Erstellt mit Protokoll KI – vollständig offline auf diesem Gerät verarbeitet."
+FOOTER_NOTE = "Erstellt mit Protokoll KI (KI-gestützt, vor Weitergabe bitte prüfen) – vollständig offline auf diesem Gerät verarbeitet."
 SIGNATURE_LINE = "______________________________"
 SIGNATURE_PLACE_DATE = "Ort, Datum"
 MINUTE_TAKER_ROLE = "Protokollführung"
