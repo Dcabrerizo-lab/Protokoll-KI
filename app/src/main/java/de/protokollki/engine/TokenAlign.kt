@@ -26,12 +26,16 @@ object TokenAlign {
             if (t.isNotEmpty()) out += Word(t, start, end)
             text = StringBuilder()
         }
+        // Parakeet gibt vor Ziffern ein eigenes Leerzeichen-Token aus („am“, „ “, „1“, „8“): als Wortgrenze merken
+        var pendingSpace = false
         for (i in tokens.indices) {
             val raw = tokens[i].replace('▁', ' ')
-            if (raw.isBlank()) continue
+            if (raw.isEmpty()) continue
+            if (raw.isBlank()) { pendingSpace = true; continue }
             val ts = offset + (timestamps.getOrNull(i) ?: continue)
             val dur = durations?.getOrNull(i)?.takeIf { it > 0f } ?: 0.08f
-            val newWord = raw.startsWith(" ") || text.isEmpty()
+            val newWord = raw.startsWith(" ") || pendingSpace || text.isEmpty()
+            pendingSpace = false
             if (newWord) { flush(); start = ts }
             text.append(raw.trimStart().let { if (newWord) it else raw })
             end = ts + dur

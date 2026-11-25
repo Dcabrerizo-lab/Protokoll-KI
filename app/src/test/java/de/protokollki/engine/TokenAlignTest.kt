@@ -54,4 +54,11 @@ class TokenAlignTest {
         assertEquals(listOf(0f to 17f, 17f to 34f, 34f to 51f, 51f to 60f), win)
         assertEquals(listOf(0f to 10f), TokenAlign.windows(10f) { a, _ -> a })
     }
+
+    @Test
+    fun separateSpaceTokenBeforeDigitsStartsNewWord() {
+        val t = arrayOf(" am", " ", "1", "8", ".", " Dez", "ember", " um", " ", "1", "6", " Uhr")
+        val ts = FloatArray(t.size) { it * 0.1f }
+        assertEquals(listOf("am", "18.", "Dezember", "um", "16", "Uhr"), TokenAlign.words(t, ts, null, 0f).map { it.text })
+    }
 }
