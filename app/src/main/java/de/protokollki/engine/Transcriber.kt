@@ -45,8 +45,8 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
             ),
             clustering = FastClusteringConfig(
                 numClusters = if (numSpeakers > 0) numSpeakers else -1,
-                // an deutschen Testaufnahmen abgestimmt (0,5 fasst ähnliche Stimmen zusammen)
-                threshold = 0.35f,
+                // an 18 deutschen Testszenarien abgestimmt (siehe scripts/bench)
+                threshold = ModelCatalog.CLUSTER_THRESHOLD,
             ),
             minDurationOn = 0.3f,
             minDurationOff = 0.5f,

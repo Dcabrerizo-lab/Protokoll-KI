@@ -56,7 +56,7 @@ jobs:
         id: cache
         with:
           path: e2e-models
-          key: e2e-models-v4-${{ matrix.set }}
+          key: e2e-models-v5-${{ matrix.set }}
       - name: Herunterladen (mit Wiederholung)
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
@@ -71,7 +71,8 @@ jobs:
           $C $GH/asr-models/$PK.tar.bz2 | tar xj
           for f in encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt; do cp $PK/$f ../e2e-models/parakeet-$f; done
           $C $GH/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2 | tar xj
-          cp sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx ../e2e-models/pyannote-segmentation-3-0.int8.onnx
+          cp sherpa-onnx-pyannote-segmentation-3-0/model.onnx ../e2e-models/pyannote-segmentation-3-0.onnx
+          $C -o ../e2e-models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx $GH/speaker-recongition-models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx
           $C -o ../e2e-models/wespeaker_en_voxceleb_resnet34_LM.onnx $GH/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx
           $C -o ../e2e-models/$(basename $LLM) $LLM
           ls -lh ../e2e-models
@@ -115,7 +116,7 @@ jobs:
         if: matrix.set != 'none'
         with:
           path: e2e-models
-          key: e2e-models-v4-${{ matrix.set }}
+          key: e2e-models-v5-${{ matrix.set }}
           fail-on-cache-miss: true
       - name: KVM aktivieren
         run: |

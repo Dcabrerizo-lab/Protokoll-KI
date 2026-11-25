@@ -72,7 +72,8 @@ object AskEngine {
                 val top = hits.take(AskPrompt.MAX_SOURCES)
                 fun attempt(strict: Boolean): String {
                     val prompt = AskPrompt.build(q, top, meetings, strict)
-                    val raw = model.complete(AskPrompt.SYSTEM, prompt, 450, 0.2f, null) { _, done, total ->
+                    // Zweiter Versuch ohne Zufall: gleiche Frage, gleiche Antwort
+                    val raw = model.complete(AskPrompt.SYSTEM, prompt, 450, if (strict) 0.2f else 0.0f, null) { _, done, total ->
                         if (total > 0) update { s ->
                             s.copy(progressText = if (done < total) "Lese Fundstellen …" else "Formuliere Antwort …")
                         }
@@ -84,7 +85,8 @@ object AskEngine {
                 // Ausweg gewählt, obwohl es Treffer gibt: einmal ohne Ausweg nachfragen
                 if (first.startsWith(AskPrompt.NOTHING_FOUND) && _state.value.question == q) {
                     val second = attempt(strict = false)
-                    if (AskPrompt.citations(second).isNotEmpty()) second else first
+                    // Auch ohne Quellennummer besser als "nichts gefunden": die Fundstellen stehen ohnehin darunter
+                    if (second.isNotBlank() && !second.startsWith(AskPrompt.NOTHING_FOUND)) second else first
                 } else first
               }
             }
