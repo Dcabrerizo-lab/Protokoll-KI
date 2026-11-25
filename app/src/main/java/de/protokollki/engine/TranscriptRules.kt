@@ -496,6 +496,7 @@ object TranscriptRules {
         "sechsundzwanzigst", "siebenundzwanzigst", "achtundzwanzigst", "neunundzwanzigst", "dreißigst", "einunddreißigst")
     private const val MONTHS = "januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember"
     private val ORDINAL_DATE = rx("\\b(${ORDINALS.sortedByDescending { it.length }.joinToString("|")})(?:e|en|er|es|em)\\s+($MONTHS)\\b", true)
+    private val MONTH_END = rx("\\b($MONTHS)ende\\b", true)
     private val DAY_ONLY = rx("^zum\\s+\\d{1,2}\\.?$", true)
     private val DOTTED_DATE = rx("(\\d{1,2})\\.\\s+($MONTHS)\\b", true)
     private val DAY_MONTH = rx("(\\d{1,2})\\s+($MONTHS)\\b", true)
@@ -513,7 +514,7 @@ object TranscriptRules {
 
     /** Frist: "zwanzigsten Dezember" -> "20. Dezember", "möglichst diese Woche" -> "Ende dieser Woche". */
     fun normalizeDue(text: String): String {
-        var t = normalizeOrdinals(text)
+        var t = MONTH_END.replace(normalizeOrdinals(text)) { m -> "Ende ${m.groupValues[1].replaceFirstChar { it.uppercase() }}" }
         if (THIS_WEEK.containsMatchIn(t) && !t.contains("ende", ignoreCase = true)) t = "Ende dieser Woche"
         return t
     }
@@ -529,12 +530,15 @@ object TranscriptRules {
         val words = rx("[\\p{L}\\d]+").findAll(normalizeDue(due).lowercase()).map { it.value }
             .filter { it !in DUE_FILLER && (it.length >= 2 || it[0].isDigit()) }.toList()
         if (words.isEmpty()) return true
-        val ctx = cardinals(normalizeOrdinals(context)).lowercase()
+        val ctx = cardinals(normalizeOrdinals(DAY_PART.replace(context, "$1 $2"))).lowercase()
         val ctxNumbers = rx("\\d+").findAll(ctx).map { it.value.trimStart('0') }.toSet()
         // Zahlen müssen stimmen ("2. Januar" ist nicht "zehnten Januar")
         val numbers = words.filter { w -> w.all { it.isDigit() } }.map { it.trimStart('0') }.filter { it.isNotEmpty() }
         if (numbers.any { it !in ctxNumbers }) return false
-        return words.any { w -> ctx.contains(if (w.length > 5) w.take(5) else w) }
+        // Wörter gleich oder nur in der Endung verschieden ("nächste"/"nächsten"), nicht "Sitzungstermin"/"Sitzung"
+        val ctxWords = rx("[\\p{L}\\d]+").findAll(ctx).map { it.value }.toSet()
+        return words.any { w -> ctxWords.any { x -> x == w ||
+            (minOf(x.length, w.length) >= 4 && (x.startsWith(w) || w.startsWith(x)) && kotlin.math.abs(x.length - w.length) <= 2) } }
     }
 
     private val CARDINAL = rx("\\b(zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf|dreizehn|vierzehn|fünfzehn|sechzehn|siebzehn|achtzehn|neunzehn|zwanzig)\\b", true)
@@ -640,7 +644,20 @@ object TranscriptRules {
 
     // ------------------------------------------------------------ Sensible Daten
 
-    private val STREET = rx("\\b([A-ZÄÖÜ][\\p{L}-]*(?:straße|strasse|str\\.|weg|platz|gasse|allee|ring|damm|ufer))\\s+((?:\\d{1,4}\\s?[a-z]?\\b|(?:ein|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf|dreizehn|vierzehn|fünfzehn|sechzehn|siebzehn|achtzehn|neunzehn|zwanzig)\\b))")
+    private val CARE_CONTEXT = rx("\\b(zimmer|sturz|gestürzt|fieber|diagnose|pflegegrad|medikament\\p{L}*|blutdruck|blutzucker|schmerz\\p{L}*|wunde|dekubitus|demenz|klinik|krankenhaus|hausarzt|ärztin|arzt|bewohner\\p{L}*|patient\\p{L}*|klient\\p{L}*|getrunken|gegessen|insulin|rollator|pflegekasse|betreuung)\\b", true)
+    private val PERSON_REF = rx("\\b(?:Frau|Herrn?)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})")
+
+    /**
+     * Personen, über die im Pflege-/Gesundheitszusammenhang gesprochen wird ("Frau Lehmann in Zimmer drei",
+     * "Herr Becker hatte Fieber") – in jeder Besprechungsart. Mitarbeitende ([staff], klein geschrieben) nie.
+     */
+    fun clientsByContext(segments: List<Segment>, staff: Set<String>): List<String> = segments.flatMap { seg ->
+        seg.text.split(rx("(?<=[.?!])\\s+")).filter { STREET.containsMatchIn(it) || CARE_CONTEXT.containsMatchIn(it) }
+            .flatMap { sen -> PERSON_REF.findAll(sen).map { it.groupValues[1] }.toList() }
+    }.filter { it.lowercase() !in staff }.distinctBy { it.lowercase() }
+
+
+    private val STREET = rx("\\b([A-ZÄÖÜ][\\p{L}-]*(?:straße|strasse|str\\.|weg|platz|gasse|allee|ring|damm|ufer)|[A-ZÄÖÜ][\\p{L}-]+\\s+(?:Straße|Strasse|Weg|Platz|Gasse|Allee))\\s+((?:\\d{1,4}\\s?[a-z]?\\b|(?:ein|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf|dreizehn|vierzehn|fünfzehn|sechzehn|siebzehn|achtzehn|neunzehn|zwanzig)\\b))")
     private val DIGIT_WORDS = "(?:null|eins|zwei|drei|vier|fünf|sechs|sieben|acht|neun|\\d)"
     private val PHONE = rx("\\b(?:nummer|telefon|telefonnummer|handy|tel\\.?|erreichbar unter)\\s+(?:ist\\s+)?((?:$DIGIT_WORDS[\\s,/-]*){6,})",
         true)

@@ -250,4 +250,18 @@ class TranscriptRulesTest {
         assertEquals(false, TranscriptRules.dueSupported("2. Januar", "Ich schreibe bis zum zehnten Januar einen Artikel."))
         assertTrue(TranscriptRules.dueSupported("14:00 Uhr", "Ich messe um vierzehn Uhr Fieber."))
     }
+
+    @Test
+    fun clientsByCareContextExceptStaff() {
+        val s = segs(
+            0 to "Frau Okafor in Zimmer fünf hat starke Schmerzen. Herr Brandt übernimmt heute die Tour.",
+            1 to "Bei Herrn Vogel war der Blutzucker zu hoch, Frau Lange sagt dem Hausarzt Bescheid.",
+            0 to "Herr Kühn wohnt jetzt in der Linden Straße acht.",
+        )
+        assertEquals(listOf("Okafor", "Vogel", "Kühn"), TranscriptRules.clientsByContext(s, setOf("lange")))
+        assertTrue(TranscriptRules.addressesAndPhones(s).contains("Linden Straße acht"))
+        assertEquals("Ende Januar", TranscriptRules.normalizeDue("Januarende"))
+        assertEquals(false, TranscriptRules.dueSupported("nach dem Sitzungstermin", "Ich schließe die Sitzung um acht."))
+        assertTrue(TranscriptRules.dueSupported("bis zur nächsten Sitzung", "Er erstellt bis zur nächsten Sitzung einen Entwurf."))
+    }
 }

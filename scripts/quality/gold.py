@@ -26,7 +26,7 @@ GOLD = {
     "zwei_personen": dict(
         tasks=[
             dict(match=[["dienstplan"]], owner=["kaiser"], due=["25.11.2026", "mittwoch"]),
-            dict(match=[["einlad"], ["weihnacht"]], owner=["kaiser"], due=["27.11.2026", "ende der woche"]),
+            dict(match=[["einlad"], ["weihnacht"], ["laden", "alle"]], owner=["kaiser"], due=["27.11.2026", "ende der woche"]),
             dict(match=[["nachtdienst"]], owner=["@T"], due=[], optional=True),
         ],
         names=["Kaiser"], not_sensitive=["kaiser"],
@@ -35,7 +35,7 @@ GOLD = {
         tasks=[
             dict(match=[["möbel"], ["angebot"]], owner=["becker"], due=["27.11.2026", "freitag"]),
             dict(match=[["telefon"]], owner=["wagner"], due=["31.01.2027", "ende januar"]),
-            dict(match=[["entwurf"], ["tour", "teil"], ["tour", "plan"]], owner=["wagner"], due=["nächste sitzung", "15.01.2027"]),
+            dict(match=[["entwurf"], ["tour", "teil"], ["tour", "plan"]], owner=["wagner"], due=["nächste sitzung", "nächsten sitzung", "15.01.2027"]),
             dict(match=[["pflegekraft"]], optional=True),
             dict(match=[["anbieter"]], optional=True),
         ],

@@ -155,7 +155,9 @@ class ProtocolGenerator(private val model: TextModel) {
             .map { t -> t.copy(due = checkDue(t, segments, meetingDate)) }
             .map { it.copy(due = DateResolver.resolve(it.due, meetingDate)) }
             .map { it.copy(owner = resolveOwner(it.owner, it.ref, segments, ::nameOf, it.text, known, mentioned)) }
-        var tasks = refine(raws.flatMap { r -> runCatching { parseTasks(r, n) }.getOrDefault(emptyList()) })
+        // Einzelne Wörter ("Verschiedenes") sind keine Aufgaben
+        var tasks = refine(raws.flatMap { r -> runCatching { parseTasks(r, n) }.getOrDefault(emptyList()) }
+            .filter { it.text.trim().contains(' ') })
 
         // Aufgaben-Nachfassen ohne zusätzliche Modellrunde: Zusagen und Aufträge im Transkript, die keine
         // Aufgabe abdeckt (kleine Modelle übersehen sie oft), werden regelbasiert als Aufgabe formuliert.
@@ -195,10 +197,13 @@ class ProtocolGenerator(private val model: TextModel) {
             (if (template == ProtocolTemplate.FALLBESPRECHUNG || template == ProtocolTemplate.UEBERGABE)
                 addressedClients(segments, finalTasks) else emptyList()) +
             TranscriptRules.addressesAndPhones(segments) +
+            TranscriptRules.clientsByContext(segments, staff + doers(segments)) +
             (if (template == ProtocolTemplate.FALLBESPRECHUNG || template == ProtocolTemplate.UEBERGABE)
                 TranscriptRules.healthData(segments) else emptyList()))
             .filterNot { term -> term.lowercase().split(' ').filter { it.length >= 3 }.let { w -> w.isNotEmpty() && w.all { it in staff || it in setOf("frau", "herr", "herrn") } } }
             .distinctBy { it.lowercase() }
+            .let { all -> all.filterNot { t -> all.any { u -> u != t && u.length > t.length &&
+                Regex("(?<![\\p{L}])${Regex.escape(t.lowercase())}(?![\\p{L}])").containsMatchIn(u.lowercase()) } } }  // "Schulz" neben "Frau Schulz"
         progress.update(1f, "Fertig")
         return Result(summary, finalTasks, completed,
             completed.associate { it.taskId to (doneKeys[it.key] ?: -1) }, sensitive)
@@ -336,6 +341,9 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
          * keine Aufgabe übernehmen, sind in der Regel Klientinnen und Klienten. Sie werden als sensibel
          * vorgeschlagen, auch wenn das Sprachmodell sie nicht meldet (kleine Modelle tun das selten).
          */
+        private fun doers(segments: List<Segment>): Set<String> =
+            segments.flatMap { seg -> STAFF_ACTION.findAll(seg.text).map { it.groupValues[1].lowercase() }.toList() }.toSet()
+
         internal fun addressedClients(segments: List<Segment>, tasks: List<TaskItem>): List<String> {
             val staff = tasks.flatMap { t -> ADDRESS.findAll(t.owner).map { it.groupValues[2].lowercase() }.toList() +
                 t.owner.split(' ').map { it.lowercase() } }.toSet()
