@@ -60,6 +60,11 @@ for key, label in (("kurz", "Besprechung 69 s"), ("lang", "Lange Besprechung 4,7
             f"App-Speicher max. {g(key + '.max_app_speicher_mb')} MB, "
             f"freier RAM min. {g(key + '.min_frei_ram_mb')} MB"
             + (" · ⚠️ Speicher knapp" if g(key + ".speicher_knapp") == "true" else ""))
+# Zeitmessung je Schritt (App) und je Sprachmodell-Aufruf (nativ), in Reihenfolge des Protokolls
+timing = [m.group(1) + ": " + m.group(2).strip()
+          for m in re.finditer(r"PKREPORT ((?:schritt|llm)\.\d+)=(.*)", logcat)]
+if timing:
+    lines += ["", "<details><summary>Zeiten je Schritt</summary>", ""] + [f"- {t}" for t in timing[:80]] + ["", "</details>"]
 lines.append("")
 if tests:
     lines += ["| Schritt | Ergebnis | Hinweis |", "|---|---|---|"]

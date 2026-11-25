@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <string>
 #include <vector>
@@ -226,6 +227,7 @@ Java_de_protokollki_engine_LlamaNative_complete(JNIEnv *env, jobject, jlong hand
 
     // Prompt in Blöcken verarbeiten
     const int n_prompt = (int) tokens.size();
+    const int64_t t0 = ggml_time_us();
     for (int i = 0; i < n_prompt; i += BATCH_SIZE) {
         const int n = std::min(BATCH_SIZE, n_prompt - i);
         if (decode(*e, tokens.data() + i, n, i, i + n == n_prompt) != 0 || e->cancel) {
@@ -238,11 +240,12 @@ Java_de_protokollki_engine_LlamaNative_complete(JNIEnv *env, jobject, jlong hand
     auto sp = llama_sampler_chain_default_params();
     sp.no_perf = true;
     llama_sampler *smpl = llama_sampler_chain_init(sp);
+    // Grammatik (JSON-Form) separat: sie über alle ~150.000 Tokens zu prüfen kostet je Wort viel Zeit.
+    // Erst normal wählen und nur dieses eine Token prüfen; passt es nicht, mit Grammatik neu wählen
+    // (Verfahren wie in llama.cpp „common_sampler“, Ergebnis gleich, aber deutlich schneller).
     const std::string grammar = jstr(env, jgrammar);
-    if (!grammar.empty()) {
-        llama_sampler *g = llama_sampler_init_grammar(vocab, grammar.c_str(), "root");
-        if (g) llama_sampler_chain_add(smpl, g);
-    }
+    llama_sampler *gram = grammar.empty() ? nullptr
+                                          : llama_sampler_init_grammar(vocab, grammar.c_str(), "root");
     llama_sampler_chain_add(smpl, llama_sampler_init_top_k(40));
     llama_sampler_chain_add(smpl, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 256, 1.1f, 0.0f, 0.0f));
     if (temperature <= 0.0f) {
@@ -253,10 +256,38 @@ Java_de_protokollki_engine_LlamaNative_complete(JNIEnv *env, jobject, jlong hand
         llama_sampler_chain_add(smpl, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
     }
 
+    const int64_t t1 = ggml_time_us();
     std::string out;
+    int n_gen = 0;
     llama_pos pos = n_prompt;
+    const int n_vocab = llama_vocab_n_tokens(vocab);
+    std::vector<llama_token_data> cur(n_vocab);
+    auto fill = [&]() -> llama_token_data_array {
+        const float *logits = llama_get_logits_ith(e->ctx, -1);
+        for (int t = 0; t < n_vocab; ++t) cur[t] = {t, logits[t], 0.0f};
+        return {cur.data(), cur.size(), -1, false};
+    };
+    auto sample = [&]() -> llama_token {
+        llama_token_data_array arr = fill();
+        llama_sampler_apply(smpl, &arr);
+        llama_token tok = arr.data[arr.selected].id;
+        if (gram) {
+            llama_token_data one = {tok, 1.0f, 0.0f};
+            llama_token_data_array single = {&one, 1, -1, false};
+            llama_sampler_apply(gram, &single);
+            if (single.data[0].logit == -INFINITY) {
+                arr = fill();
+                llama_sampler_apply(gram, &arr);
+                llama_sampler_apply(smpl, &arr);
+                tok = arr.data[arr.selected].id;
+            }
+            llama_sampler_accept(gram, tok);
+        }
+        llama_sampler_accept(smpl, tok);
+        return tok;
+    };
     for (int i = 0; i < max_tokens; ++i) {
-        llama_token tok = llama_sampler_sample(smpl, e->ctx, -1);
+        llama_token tok = sample();
         if (llama_vocab_is_eog(vocab, tok)) break;
         char buf[256];
         int n = llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, false);
@@ -264,9 +295,19 @@ Java_de_protokollki_engine_LlamaNative_complete(JNIEnv *env, jobject, jlong hand
         if (pos + 1 >= n_ctx) break;
         if (decode(*e, &tok, 1, pos, true) != 0 || e->cancel) break;
         ++pos;
+        ++n_gen;
         if (i % 8 == 0 && !report(1, i + 1, max_tokens)) break;
     }
     llama_sampler_free(smpl);
+    if (gram) llama_sampler_free(gram);
+    {
+        // Zeitmessung für Gerätetests (PKREPORT-Zeilen werden aus dem Systemprotokoll gelesen)
+        static std::atomic<int> calls{0};
+        const double tp = (t1 - t0) / 1e6, tg = (ggml_time_us() - t1) / 1e6;
+        LOGI("PKREPORT llm.%d=Prompt %d Tok in %.1f s (%.0f T/s), Antwort %d Tok in %.1f s (%.1f T/s), max %d",
+             ++calls, n_prompt, tp, tp > 0 ? n_prompt / tp : 0.0, n_gen, tg, tg > 0 ? n_gen / tg : 0.0,
+             (int) max_tokens);
+    }
     if (e->cancel) return nullptr;
     return to_jstring(env, out);
 }

@@ -61,10 +61,13 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
         android.util.Log.i("ProtokollKI", "Schnellmodus: $fast")
         appContext = context.applicationContext
         markRunning(appContext, true)
+        val t0 = System.currentTimeMillis()
         var h = LlamaNative.load(path, ctx, threads, fast)
         if (h == 0L && fast) h = LlamaNative.load(path, ctx, threads, false)
         if (h == 0L && ctx > 4096) h = LlamaNative.load(path, 4096, threads, false)
         handle = h
+        Timing.report("laden", "Sprachmodell ${set.id}, Kontext ${if (h != 0L) LlamaNative.contextSize(h) else 0}, " +
+            "schnell=$fast, ${(System.currentTimeMillis() - t0) / 1000.0} s")
         if (handle == 0L) throw LlmException(
             "Das Sprachmodell konnte nicht geladen werden. Eventuell ist zu wenig Arbeitsspeicher frei. " +
                 "Bitte andere Apps schließen oder in den Einstellungen ein kleineres Modellpaket wählen.")

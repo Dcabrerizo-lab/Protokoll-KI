@@ -134,11 +134,13 @@ class ProcessingService : LifecycleService() {
 
         val transcriber = Transcriber(set, AppSettings.state.value.language)
         progress(id, MeetingStatus.TRANSCRIBING, 0.01f, "Erkenne Sprecher …")
+        var t0 = System.currentTimeMillis()
         val turns = transcriber.diarize(samples, expectedSpeakers) { f ->
             progress(id, MeetingStatus.TRANSCRIBING, 0.2f * f, "Erkenne Sprecher …")
             !cancelled.get()
         }
         if (cancelled.get()) return
+        de.protokollki.engine.Timing.since("sprecher", t0, "Audio ${duration.toInt()} s")
         val chunks = transcriber.planChunks(turns, samples)
         val speakerCount = (chunks.maxOfOrNull { it.speaker } ?: 0) + 1
         // Bekannte Stimmen erkennen (Stimmprofile)
@@ -153,6 +155,7 @@ class ProcessingService : LifecycleService() {
         MeetingRepository.update(id) { it.copy(speakers = speakers, segments = emptyList()) }
 
         val vocab = de.protokollki.engine.Vocabulary.terms()
+        t0 = System.currentTimeMillis()
         val raw = transcriber.transcribe(samples, chunks) { done, total, partial ->
             MeetingRepository.update(id, persist = false) {
                 it.copy(
@@ -165,6 +168,7 @@ class ProcessingService : LifecycleService() {
             !cancelled.get()
         }
         if (cancelled.get()) return
+        de.protokollki.engine.Timing.since("text", t0, "${raw.size} Beiträge")
         // Eigenes Wörterbuch: Namen und Fachbegriffe richtig schreiben
         val segments = if (vocab.isEmpty()) raw
         else raw.map { it.copy(text = de.protokollki.engine.Vocabulary.correct(it.text, vocab)) }
@@ -181,6 +185,7 @@ class ProcessingService : LifecycleService() {
         if (meeting.segments.isEmpty()) return
         progress(id, MeetingStatus.SUMMARIZING, 0f, "Lade Sprachmodell …")
         de.protokollki.engine.AskEngine.releaseNow()   // nie zwei Sprachmodelle gleichzeitig im RAM
+        val tSum = System.currentTimeMillis()
         val llm = LocalLlm(applicationContext, set)
         currentLlm = llm
         try {
@@ -204,6 +209,7 @@ class ProcessingService : LifecycleService() {
                 progress(id, MeetingStatus.SUMMARIZING, f, text)
                 !cancelled.get()
             }
+            de.protokollki.engine.Timing.since("protokoll", tSum, "${result.tasks.size} Aufgaben")
             // Erledigte Aufgaben in den Ursprungs-Besprechungen abhaken
             val dateText = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.GERMAN)
                 .format(java.util.Date(meeting.createdAt))
