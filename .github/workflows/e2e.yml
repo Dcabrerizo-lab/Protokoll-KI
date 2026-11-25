@@ -141,3 +141,94 @@ jobs:
         with:
           name: e2e-${{ strategy.job-index }}
           path: e2e-out/
+
+  # ------------------------------------------------------------------ Stress-Szenarien (Messung)
+  # Harte Bedingungen (Hall, Fernmikrofon, Café, Straße, Durcheinanderreden, 8 Sprecher, Fachvokabular,
+  # andere Stimmlagen). Das Audio wird hier erzeugt (nicht eingecheckt). Ein FAIL färbt den Workflow
+  # nicht rot (continue-on-error): Ziel ist die Messung, Ergebnisse stehen im Log und im Artefakt.
+  stress-audio:
+    name: Stress-Audio erzeugen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Stimmen laden und Audio erzeugen
+        run: |
+          set -e
+          C="curl -fsSL --retry 6 --retry-all-errors --retry-delay 10"
+          mkdir -p voices stress-out
+          for v in thorsten-medium karlsson-low pavoque-low kerstin-low eva_k-x_low ramona-low glados-medium; do
+            $C https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-de_DE-$v.tar.bz2 | tar xj -C voices
+          done
+          # Piper braucht das espeak-Frontend, das sherpa-onnx 2.x im Python-Paket nicht mehr hat
+          pip install -q sherpa-onnx==1.12.40 soundfile scipy numpy
+          python scripts/e2e/scenarios/make_audio.py voices stress-out --nur-stress 2>&1 | grep -v "Skip unknown phonemes"
+          ls -lh stress-out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stress-audio
+          path: stress-out/
+
+  stress:
+    name: ${{ matrix.name }}
+    needs: [build, models, stress-audio]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Stress-Szenarien A · Akustik", cmd: "scenarios.sh standard stress_hall stress_fernmikrofon stress_cafe stress_strasse stress_fern_hall_laerm" }
+          - { name: "Stress-Szenarien B · Gespräch", cmd: "scenarios.sh standard stress_durcheinander stress_grossteam stress_fachvokabular stress_akzente" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-apks
+          path: app/build/outputs/apk
+      - uses: actions/download-artifact@v4
+        with:
+          name: stress-audio
+          path: scripts/e2e/scenarios/out
+      - name: APK-Pfade ordnen
+        run: |
+          mkdir -p app/build/outputs/apk/debug
+          f=$(find app/build/outputs/apk -name app-debug.apk | head -1); [ "$f" = app/build/outputs/apk/debug/app-debug.apk ] || cp "$f" app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/cache/restore@v4
+        with:
+          path: e2e-models
+          key: e2e-models-v3-standard
+          fail-on-cache-miss: true
+      - name: KVM aktivieren
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Emulator starten und testen
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          MODELS: e2e-models
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          ram-size: 8192M
+          disk-size: 10G
+          cores: 4
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          script: bash scripts/e2e/${{ matrix.cmd }}
+      - name: Messergebnis
+        if: always()
+        run: |
+          f=e2e-out/results.txt
+          [ -f $f ] || exit 0
+          { echo "## ${{ matrix.name }}"; echo; echo "Bestanden: $(grep -c '^PASS' $f) · Fehlgeschlagen: $(grep -c '^FAIL' $f)"; echo; echo '```'; grep -E '^(PASS|FAIL)' $f; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-stress-${{ strategy.job-index }}
+          path: e2e-out/

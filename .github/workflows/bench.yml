@@ -1,0 +1,91 @@
+name: Benchmark Sprecher- und Spracherkennung (Host)
+
+# Misst WER, Sprecher-Zuordnungsfehler, DER, Sprecherzahl und Laufzeit (Diarisierung/ASR) für alle
+# Szenarien inkl. Stress-Szenarien und vergleicht Embedding-Modelle. Ergebnis: Job-Log + Zusammenfassung.
+on:
+  workflow_dispatch:
+    inputs:
+      emb:
+        description: "Embedding-Modelle (Leerzeichen-getrennt, Modell:Schwelle[,Schwelle])"
+        required: false
+        default: ""
+      marathon:
+        description: "60-Minuten-Aufnahme mitmessen (Basis + bestes Modell)"
+        type: boolean
+        default: false
+  push:
+    branches: [bench-stress]
+    paths:
+      - "scripts/bench/**"
+      - "scripts/e2e/scenarios/**"
+      - ".github/workflows/bench.yml"
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GH: https://github.com/k2-fsa/sherpa-onnx/releases/download
+  # Standard-Vergleich: App-Modell (Basis, zuerst) und die schnellsten Kandidaten mit Schwellen-Raster
+  EMB_DEFAULT: >-
+    wespeaker_en_voxceleb_resnet34_LM.onnx:0.35
+    3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx:0.3,0.4,0.5
+    wespeaker_en_voxceleb_CAM++_LM.onnx:0.3,0.4,0.5
+    nemo_en_titanet_small.onnx:0.3,0.4,0.5
+
+jobs:
+  bench:
+    name: Benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: bench-models
+          key: bench-models-v1
+      - name: Modelle und Stimmen laden
+        run: |
+          set -e
+          C="curl -fsSL --retry 6 --retry-all-errors --retry-delay 10"
+          mkdir -p bench-models/emb bench-models/voices && cd bench-models
+          [ -d sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8 ] || $C $GH/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2 | tar xj
+          [ -d sherpa-onnx-pyannote-segmentation-3-0 ] || $C $GH/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2 | tar xj
+          for m in wespeaker_en_voxceleb_resnet34_LM 3dspeaker_speech_campplus_sv_en_voxceleb_16k wespeaker_en_voxceleb_CAM++ \
+                   wespeaker_en_voxceleb_CAM++_LM 3dspeaker_speech_eres2net_sv_en_voxceleb_16k \
+                   3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k nemo_en_titanet_small \
+                   nemo_en_speakerverification_speakernet 3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced; do
+            [ -f emb/$m.onnx ] || $C -o emb/$m.onnx "$GH/speaker-recongition-models/$m.onnx"
+          done
+          for v in thorsten-medium karlsson-low pavoque-low kerstin-low eva_k-x_low ramona-low glados-medium; do
+            [ -d voices/vits-piper-de_DE-$v ] || $C $GH/tts-models/vits-piper-de_DE-$v.tar.bz2 | tar xj -C voices
+          done
+          du -sh * emb/*
+      - name: Python-Pakete
+        run: |
+          pip install -q sherpa-onnx==2.0.3 soundfile scipy numpy
+          # Piper-Sprachausgabe braucht das espeak-Frontend, das sherpa-onnx 2.x im Python-Paket nicht mehr hat
+          python -m venv tts && tts/bin/pip install -q sherpa-onnx==1.12.40 soundfile scipy numpy
+      - name: Stress-Audio erzeugen
+        run: |
+          mkdir -p sc
+          cp scripts/e2e/scenarios/out/*.wav scripts/e2e/scenarios/out/*.json sc/
+          F="--nur-stress"; [ "${{ inputs.marathon }}" = true ] && F="$F --marathon"
+          tts/bin/python scripts/e2e/scenarios/make_audio.py bench-models/voices sc $F 2>&1 | grep -v "Skip unknown phonemes"
+      - name: Benchmark
+        run: |
+          EMB="${{ inputs.emb }}"; [ -n "$EMB" ] || EMB="$EMB_DEFAULT"
+          ARGS=""; for e in $EMB; do ARGS="$ARGS --emb $e"; done
+          python scripts/bench/asr_diar_bench.py --scenarios sc --models bench-models $ARGS --detail \
+            --out bench.md --json bench.json
+          { echo "## Benchmark Sprecher- und Spracherkennung"; echo; echo "Runner: $(nproc) Kerne, 4 Threads wie die App"; echo; cat bench.md; } >> "$GITHUB_STEP_SUMMARY"
+      - name: 60-Minuten-Aufnahme
+        if: inputs.marathon
+        run: |
+          python scripts/bench/asr_diar_bench.py --scenarios sc --models bench-models --only stress_marathon --skip "" \
+            --no-asr-norm --emb wespeaker_en_voxceleb_resnet34_LM.onnx:0.35 --emb 3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx:0.4 \
+            --out marathon.md
+          { echo "## 60-Minuten-Aufnahme"; echo; cat marathon.md; } >> "$GITHUB_STEP_SUMMARY"
