@@ -140,6 +140,8 @@ Java_de_protokollki_engine_LlamaNative_init(JNIEnv *env, jobject, jstring native
     const std::string dir = jstr(env, native_lib_dir);
     ggml_backend_load_all_from_path(dir.c_str());
     llama_backend_init();
+    // Welche CPU-Variante (NEON, DOTPROD, I8MM, SVE …) geladen wurde: wichtig für die Geschwindigkeit
+    LOGI("PKREPORT cpu=%s", llama_print_system_info());
 }
 
 JNIEXPORT jlong JNICALL
