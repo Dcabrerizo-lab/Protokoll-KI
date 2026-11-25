@@ -185,7 +185,7 @@ object Recorder {
             if (minBuf <= 0) throw IllegalStateException("Das Mikrofon unterstützt 16 kHz nicht.")
             val bufBytes = maxOf(minBuf, CHUNK * 2 * 4)
 
-            val rec = createRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, bufBytes)
+            var rec = createRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, bufBytes)
                 ?: createRecord(MediaRecorder.AudioSource.MIC, bufBytes)
                 ?: throw IllegalStateException("Das Mikrofon konnte nicht geöffnet werden.")
             record = rec
@@ -231,7 +231,30 @@ object Recorder {
                 }
                 val n = rec.read(buf, 0, buf.size)
                 if (n < 0) {
-                    throw IllegalStateException("Fehler beim Lesen vom Mikrofon ($n).")
+                    // Mikrofon kurz verloren (Anruf, Audiodienst neu gestartet): neu öffnen statt die
+                    // Aufnahme zu beenden; die Lücke wird mit Stille gefüllt, damit die Zeitachse stimmt.
+                    Log.w(TAG, "Lesefehler $n – öffne das Mikrofon neu")
+                    val lostAt = System.nanoTime()
+                    runCatching { rec.stop() }
+                    runCatching { rec.release() }
+                    runCatching { ns?.release() }
+                    ns = null
+                    record = null
+                    rec = reopenRecord(bufBytes)
+                        ?: throw IllegalStateException("Fehler beim Lesen vom Mikrofon ($n).")
+                    record = rec
+                    if (!paused) {
+                        var gap = ((System.nanoTime() - lostAt) / 1_000_000_000.0 * RATE).toLong()
+                            .coerceIn(0L, RATE * 60L)
+                        val silence = ShortArray(CHUNK)
+                        while (gap > 0) {
+                            val k = minOf(gap, CHUNK.toLong()).toInt()
+                            w.write(silence, k)
+                            samples += k
+                            gap -= k
+                        }
+                    }
+                    continue
                 }
                 // Pausiert: weiterlesen (Puffer leeren), aber nichts schreiben – Zeit bleibt stehen.
                 if (n == 0 || paused) continue
@@ -260,6 +283,30 @@ object Recorder {
         // Was tatsächlich auf der Platte steht (bei "Speicher voll" evtl. weniger als gelesen)
         writer?.let { samples = minOf(samples, it.samplesWritten) }
         finish(id, samples, error)
+    }
+
+    /** Öffnet das Mikrofon erneut (bis zu ~30 s, solange nicht beendet wird). */
+    private fun reopenRecord(bufBytes: Int): AudioRecord? {
+        repeat(30) {
+            if (stopRequested) return null
+            val r = createRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, bufBytes)
+                ?: createRecord(MediaRecorder.AudioSource.MIC, bufBytes)
+            if (r != null) {
+                try {
+                    r.startRecording()
+                    if (r.recordingState == AudioRecord.RECORDSTATE_RECORDING) return r
+                } catch (e: Exception) {
+                    Log.w(TAG, "Neustart des Mikrofons fehlgeschlagen", e)
+                }
+                runCatching { r.release() }
+            }
+            try {
+                Thread.sleep(1000)
+            } catch (e: InterruptedException) {
+                return null
+            }
+        }
+        return null
     }
 
     @SuppressLint("MissingPermission")
