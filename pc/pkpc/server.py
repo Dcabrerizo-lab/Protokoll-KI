@@ -264,6 +264,22 @@ def _reveal(p: Path, select: bool = False) -> None:
         _open_file(p if not select else p.parent)
 
 
+# ------------------------------------------------------------------ Rechtstexte
+
+def legal_text(name: str) -> str:
+    """Datenschutz, Lizenzen, Impressum – dieselben Dateien wie in der Android-App.
+
+    Zeilen mit dem Platzhalter „[BITTE AUSFÜLLEN …]“ werden nicht angezeigt.
+    """
+    for base in (resource("legal"),
+                 Path(__file__).resolve().parents[2] / "app/src/main/assets/legal"):
+        f = base / f"{name}.md"
+        if f.exists():
+            lines = f.read_text("utf-8").splitlines()
+            return "\n".join(line for line in lines if "[BITTE AUSFÜLLEN" not in line)
+    return ""
+
+
 # ------------------------------------------------------------------ HTTP
 
 def make_handler(app: App):
@@ -326,6 +342,9 @@ def make_handler(app: App):
                 return self._audio(m.group(1))
             if p == "/api/devices":
                 return self._json(recorder.devices())
+            m = re.fullmatch(r"/api/legal/(datenschutz|lizenzen|impressum)", p)
+            if m:
+                return self._json({"text": legal_text(m.group(1))})
             return self._json({"error": "not found"}, 404)
 
         def _audio(self, mid: str):

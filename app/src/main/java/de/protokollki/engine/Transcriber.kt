@@ -265,6 +265,8 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
             ),
             decodingMethod = "greedy_search",
         )
+        // Pegelangleich wie bei der Sprechererkennung (leise Aufnahmen), je Abschnitt ohne zweite Kopie
+        val gain = AudioLevel.gain(samples)
         val recognizer = OfflineRecognizer(config = config)
         val segments = mutableListOf<Segment>()
         try {
@@ -274,7 +276,7 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
                 if (b - a >= sampleRate / 4) {
                     val stream = recognizer.createStream()
                     try {
-                        stream.acceptWaveform(samples.floats(a, b), sampleRate)
+                        stream.acceptWaveform(AudioLevel.applyGain(samples.floats(a, b), gain), sampleRate)
                         recognizer.decode(stream)
                         val text = TextCleanup.clean(recognizer.getResult(stream).text)
                         if (text.isNotEmpty() && !TextCleanup.isHallucination(text, b - a)) {
@@ -326,6 +328,10 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
         // Nur Fenster mit Sprache (laut Sprechererkennung) verarbeiten
         val windows = TokenAlign.windows(totalSec) { a, b -> quietestPoint(samples, a, b) }
             .filter { (a, b) -> chunks.isEmpty() || chunks.any { it.end > a && it.start < b } }
+        // Pegelangleich wie bei der Sprechererkennung: leise Aufnahmen (Fernmikrofon) ergaben sonst fast
+        // nur Fehler oder leeren Text (Messung: 91 % → 73 % Wortfehler bei -35 dBFS). Je Fenster, damit
+        // bei langen Aufnahmen keine zweite Kopie der ganzen Aufnahme im Speicher liegt.
+        val gain = AudioLevel.gain(samples)
         val recognizer = OfflineRecognizer(config = config)
         val words = mutableListOf<TokenAlign.Word>()
         var segments: List<Segment> = emptyList()
@@ -336,7 +342,7 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
                 if (b - a >= sampleRate / 4) {
                     val stream = recognizer.createStream()
                     try {
-                        stream.acceptWaveform(samples.floats(a, b), sampleRate)
+                        stream.acceptWaveform(AudioLevel.applyGain(samples.floats(a, b), gain), sampleRate)
                         recognizer.decode(stream)
                         val r = recognizer.getResult(stream)
                         words += TokenAlign.words(r.tokens, r.timestamps, r.durations, w.first)

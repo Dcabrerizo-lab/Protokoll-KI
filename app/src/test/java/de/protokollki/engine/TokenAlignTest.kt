@@ -56,6 +56,13 @@ class TokenAlignTest {
     }
 
     @Test
+    fun separateSpaceTokenBeforeDigitsStartsNewWord() {
+        val t = arrayOf(" am", " ", "1", "8", ".", " Dez", "ember", " um", " ", "1", "6", " Uhr")
+        val ts = FloatArray(t.size) { it * 0.1f }
+        assertEquals(listOf("am", "18.", "Dezember", "um", "16", "Uhr"), TokenAlign.words(t, ts, null, 0f).map { it.text })
+    }
+
+    @Test
     fun sortedLookupMatchesLinearSearch_onLongRecordings() {
         val rnd = kotlin.random.Random(3)
         // 3000 Abschnitte mit Lücken und direkt anschließenden Grenzen (wie nach planChunks)

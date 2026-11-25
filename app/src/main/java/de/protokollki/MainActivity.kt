@@ -22,6 +22,7 @@ import de.protokollki.data.AppSettings
 import de.protokollki.privacy.AppLock
 import de.protokollki.privacy.Retention
 import de.protokollki.ui.AppNavigation
+import de.protokollki.ui.components.CrashDialog
 import de.protokollki.ui.components.LockOverlay
 import de.protokollki.ui.theme.ProtokollTheme
 import kotlinx.coroutines.delay
@@ -39,6 +40,9 @@ class MainActivity : ComponentActivity() {
     /** Per „Teilen“ empfangene Audio-/Videodatei, die importiert werden soll. */
     private val sharedUri = mutableStateOf<Uri?>(null)
 
+    /** Bericht vom letzten Absturz, falls einer vorliegt. */
+    private val crashReport = mutableStateOf<String?>(null)
+
     /** Letzte Fehlermeldung beim Entsperren (wird auf der Sperre angezeigt). */
     private val unlockError = mutableStateOf<String?>(null)
 
@@ -54,6 +58,12 @@ class MainActivity : ComponentActivity() {
                 isDaemon = true
                 start()
             }
+        }
+        // Bericht vom letzten Absturz (nur lokal gespeichert); in Test-Builds nicht anzeigen,
+        // damit automatische Oberflächentests nicht an einem Dialog hängen bleiben.
+        val debuggable = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (savedInstanceState == null && !debuggable) {
+            crashReport.value = runCatching { CrashReporter.takePending(this) }.getOrNull()
         }
         setContent {
             val settings by AppSettings.state.collectAsState()
@@ -80,6 +90,15 @@ class MainActivity : ComponentActivity() {
                             if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) unlock()
                         }
                         LockOverlay(onUnlock = { unlock() }, error = unlockError.value)
+                    }
+                    crashReport.value?.takeIf { !showLock }?.let { report ->
+                        CrashDialog(
+                            onSend = {
+                                crashReport.value = null
+                                CrashReporter.share(this@MainActivity, report)
+                            },
+                            onDismiss = { crashReport.value = null },
+                        )
                     }
                 }
             }

@@ -142,13 +142,20 @@ def tokens_to_words(tokens, timestamps, durations, offset: float) -> list[Word]:
         if t:
             out.append(Word(t, start, end))
 
+    pending_space = False  # Parakeet: eigenes Leerzeichen-Token vor Ziffern („am“, „ “, „1“, „8“)
     for i, tok in enumerate(tokens):
         raw = tok.replace("▁", " ")
-        if not raw.strip() or i >= len(timestamps):
+        if not raw:
+            continue
+        if not raw.strip():
+            pending_space = True
+            continue
+        if i >= len(timestamps):
             continue
         ts = offset + float(timestamps[i])
         dur = float(durations[i]) if durations is not None and i < len(durations) and durations[i] > 0 else 0.08
-        new_word = raw.startswith(" ") or not text
+        new_word = raw.startswith(" ") or pending_space or not text
+        pending_space = False
         if new_word:
             flush()
             text, start = "", ts

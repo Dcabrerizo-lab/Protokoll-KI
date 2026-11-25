@@ -19,7 +19,8 @@ for pkg in pkgs:
     binaries += b
     hidden += h
 # mitgelieferte Teile, falls vorhanden: KI-Komponente, Schriften (PDF), PortAudio (Linux-Mikrofon)
-for src, dst in (("build/llama", "llama"), ("build/fonts", "fonts"), ("build/lib", "lib")):
+for src, dst in (("build/llama", "llama"), ("build/fonts", "fonts"), ("build/lib", "lib"),
+                 ("../app/src/main/assets/legal", "legal")):     # Datenschutz, Lizenzen, Impressum
     if os.path.isdir(src):
         datas.append((src, dst))
 
