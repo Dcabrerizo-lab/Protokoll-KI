@@ -2,9 +2,10 @@
 """Host-Benchmark für Sprechererkennung (Diarisierung) und Spracherkennung (Parakeet) wie in der App.
 
 Misst je Szenario (WAV + JSON aus scripts/e2e/scenarios/make_audio.py):
-  WER         Wortfehlerquote der Parakeet-Transkription gegen den Szenario-Text (normalisiert:
-              klein, ohne Satzzeichen, Zahlen als Wörter)
-  WER norm    dasselbe, aber ASR auf pegelangeglichenem Audio (AudioLevel) – Vorschlag, nicht App
+  WER         Wortfehlerquote der Parakeet-Transkription gegen den Szenario-Text (Text normalisiert:
+              klein, ohne Satzzeichen, Zahlen als Wörter). ASR wie die App seit 314924e auf
+              pegelangeglichenem Audio (AudioLevel.gain einmal für die Aufnahme, Clipping ±1)
+  WER roh     dasselbe auf dem Rohsignal (Verhalten der App vor 314924e)
   Wort-Spk    Anteil der erkannten Wörter beim falschen Sprecher nach optimaler Zuordnung
               (Zuordnung wie in der App: planChunks + TokenAlign.speakerAt + mergeTiny)
   DER         Diarisierungsfehler auf 10-ms-Rastern (Verpasst + Fehlalarm + Verwechslung, Collar 0,25 s)
@@ -13,7 +14,8 @@ Misst je Szenario (WAV + JSON aus scripts/e2e/scenarios/make_audio.py):
 
 Gleiche Parameter wie die App (Transcriber.kt): Clustering-Schwelle 0,35, minDurationOn 0,3,
 minDurationOff 0,5, Pegelangleich vor der Diarisierung (AudioLevel.kt), ASR in Fenstern 15–25 s,
-geschnitten am leisesten 100-ms-Punkt. Abweichung: ASR-Fenster werden nicht nach Sprache gefiltert
+geschnitten am leisesten 100-ms-Punkt. Segmentierung: App nutzt model.int8.onnx; mit --seg model.onnx lässt sich die fp32-Variante vergleichen.
+Abweichung: ASR-Fenster werden nicht nach Sprache gefiltert
 (damit die ASR für alle Embedding-Modelle nur einmal läuft).
 
 Beispiel:
@@ -313,11 +315,11 @@ class Asr:
         return words, " ".join(texts), time.perf_counter() - t0
 
 
-def diarize(models, emb_path, thr, x, threads):
+def diarize(models, emb_path, thr, x, threads, seg="model.int8.onnx"):
     cfg = sherpa_onnx.OfflineSpeakerDiarizationConfig(
         segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
             pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
-                model=f"{models}/sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx"),
+                model=f"{models}/sherpa-onnx-pyannote-segmentation-3-0/{seg}"),
             num_threads=threads),
         embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=emb_path, num_threads=threads),
         clustering=sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=thr),
@@ -341,11 +343,13 @@ def main():
     ap.add_argument("--models", required=True)
     ap.add_argument("--emb", action="append", default=[],
                     help="Embedding-Modell[:Schwelle[,Schwelle…]] (mehrfach). Standard: App-Modell bei 0,35")
+    ap.add_argument("--seg", action="append", default=[],
+                    help="Segmentierungsmodell im pyannote-Ordner (mehrfach): model.int8.onnx (App) oder model.onnx")
     ap.add_argument("--only", default="", help="nur diese Szenarien (Komma-Liste, Präfix erlaubt)")
     ap.add_argument("--skip", default="stress_marathon,stille,kurz", help="Szenarien auslassen")
     ap.add_argument("--threads", type=int, default=4, help="wie App: min(4, Kerne-2)")
     ap.add_argument("--no-asr", action="store_true", help="nur Diarisierung (Wort-Spk entfällt)")
-    ap.add_argument("--no-asr-norm", action="store_true", help="ASR nicht zusätzlich auf normalisiertem Audio")
+    ap.add_argument("--no-asr-raw", action="store_true", help="ASR nicht zusätzlich auf dem Rohsignal")
     ap.add_argument("--asr-cache", default="", help="JSON-Datei: ASR-Ergebnisse wiederverwenden/speichern")
     ap.add_argument("--out", default="", help="Markdown zusätzlich in diese Datei schreiben")
     ap.add_argument("--json", default="", help="Rohdaten als JSON")
@@ -353,12 +357,14 @@ def main():
     a = ap.parse_args()
 
     embs = []
-    for spec in a.emb or ["wespeaker_en_voxceleb_resnet34_LM.onnx:0.35"]:
-        path, _, thr = spec.partition(":")
-        if not os.path.exists(path):
-            path = f"{a.models}/emb/{path}"
-        for t in (thr or "0.35").split(","):
-            embs.append((os.path.basename(path).removesuffix(".onnx"), path, float(t)))
+    for seg in a.seg or ["model.int8.onnx"]:
+        tag = "" if seg == "model.int8.onnx" else f" +seg {seg.removesuffix('.onnx')}"
+        for spec in a.emb or ["wespeaker_en_voxceleb_resnet34_LM.onnx:0.35"]:
+            path, _, thr = spec.partition(":")
+            if not os.path.exists(path):
+                path = f"{a.models}/emb/{path}"
+            for t in (thr or "0.35").split(","):
+                embs.append((os.path.basename(path).removesuffix(".onnx") + tag, path, float(t), seg))
 
     names = sorted(os.path.basename(p)[:-5] for p in glob.glob(f"{a.scenarios}/*.json"))
     skip = set(filter(None, a.skip.split(",")))
@@ -384,11 +390,11 @@ def main():
         if not a.no_asr:
             if name not in cache:
                 asr = asr or Asr(a.models, a.threads)
-                w, txt, t = asr.run(x)
+                w, txt, t = asr.run(normalize(x))
                 c = {"words": w, "text": txt, "t_asr": t}
-                if not a.no_asr_norm:
-                    _, txt_n, tn = asr.run(normalize(x))
-                    c.update(text_norm=txt_n, t_asr_norm=tn)
+                if not a.no_asr_raw:
+                    _, txt_r, tr = asr.run(x)
+                    c.update(text_raw=txt_r, t_asr_raw=tr)
                 cache[name] = c
                 if a.asr_cache:
                     json.dump(cache, open(a.asr_cache, "w"))
@@ -397,15 +403,15 @@ def main():
             hyp = norm_text(" ".join(w[0] for w in words))
             info.update(wer=edit_ops(ref_words, hyp) / max(1, len(ref_words)), t_asr=c["t_asr"],
                         n_ref_words=len(ref_words))
-            if "text_norm" in c:
-                info["wer_norm"] = edit_ops(ref_words, norm_text(c["text_norm"])) / max(1, len(ref_words))
+            if "text_raw" in c:
+                info["wer_raw"] = edit_ops(ref_words, norm_text(c["text_raw"])) / max(1, len(ref_words))
             text = c["text"].lower()
             kws = meta["expect"].get("keywords", [])
             info["kw"] = (sum(1 for k in kws if k.lower()[: max(4, len(k) - 2)] in text), len(kws))
         else:
             words = []
-        for emb_name, emb_path, thr in embs:
-            turns, t_d = diarize(a.models, emb_path, thr, x, a.threads)
+        for emb_name, emb_path, thr, seg in embs:
+            turns, t_d = diarize(a.models, emb_path, thr, x, a.threads, seg)
             chunks = plan_chunks(turns)
             row = dict(info, emb=emb_name, thr=thr, t_diar=t_d, rtf_diar=t_d / dur,
                        n_raw=len({k for *_, k in turns}), der=der(turns, ref, dur))
@@ -432,7 +438,7 @@ def report(rows, embs, detail):
     lines = []
     base = embs[0]
     lines.append(f"### Je Szenario ({base[0]}, Schwelle {base[2]})\n")
-    lines.append("| Szenario | Dauer | Spk erkannt/echt (erwartet) | WER | WER norm. | Wort-Spk-Fehler | DER | Diar s (RTF) | ASR s (RTF) | Schlüsselw. |")
+    lines.append("| Szenario | Dauer | Spk erkannt/echt (erwartet) | WER | WER roh | Wort-Spk-Fehler | DER | Diar s (RTF) | ASR s (RTF) | Schlüsselw. |")
     lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for r in rows:
         if (r["emb"], r["thr"]) != (base[0], base[2]):
@@ -440,7 +446,7 @@ def report(rows, embs, detail):
         ok = "" if r["range"][0] <= r["n_det"] <= r["range"][1] else " ✗"
         kw = f"{r['kw'][0]}/{r['kw'][1]}" if "kw" in r else "–"
         lines.append(f"| {r['scenario']} | {r['dur']:.0f} s | {r['n_det']}/{r['n_true']} ({r['range'][0]}–{r['range'][1]}){ok} | "
-                     f"{fmt(r.get('wer'), 1, True)} | {fmt(r.get('wer_norm'), 1, True)} | {fmt(r.get('wspk'), 1, True)} | "
+                     f"{fmt(r.get('wer'), 1, True)} | {fmt(r.get('wer_raw'), 1, True)} | {fmt(r.get('wspk'), 1, True)} | "
                      f"{fmt(r['der'], 1, True)} | {r['t_diar']:.1f} ({r['rtf_diar']:.3f}) | "
                      f"{fmt(r.get('t_asr'))} ({fmt(r.get('t_asr', float('nan')) / r['dur'], 3)}) | {kw} |")
     lines.append("\n### Je Embedding-Modell und Schwelle (alle Szenarien)\n")

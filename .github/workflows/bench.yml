@@ -27,11 +27,13 @@ concurrency:
 env:
   GH: https://github.com/k2-fsa/sherpa-onnx/releases/download
   # Standard-Vergleich: App-Modell (Basis, zuerst) und die schnellsten Kandidaten mit Schwellen-Raster
+  # (Schwellen aus dem Raster-Lauf 0,25–0,75; Segmentierung int8 = App und fp32 im Vergleich)
   EMB_DEFAULT: >-
     wespeaker_en_voxceleb_resnet34_LM.onnx:0.35
-    3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx:0.3,0.4,0.5
-    wespeaker_en_voxceleb_CAM++_LM.onnx:0.3,0.4,0.5
-    nemo_en_titanet_small.onnx:0.3,0.4,0.5
+    3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx:0.6
+    3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx:0.65
+    nemo_en_speakerverification_speakernet.onnx:0.55
+    nemo_en_titanet_small.onnx:0.65
 
 jobs:
   bench:
@@ -80,12 +82,14 @@ jobs:
           EMB="${{ inputs.emb }}"; [ -n "$EMB" ] || EMB="$EMB_DEFAULT"
           ARGS=""; for e in $EMB; do ARGS="$ARGS --emb $e"; done
           python scripts/bench/asr_diar_bench.py --scenarios sc --models bench-models $ARGS --detail \
+            --seg model.int8.onnx --seg model.onnx \
             --out bench.md --json bench.json
           { echo "## Benchmark Sprecher- und Spracherkennung"; echo; echo "Runner: $(nproc) Kerne, 4 Threads wie die App"; echo; cat bench.md; } >> "$GITHUB_STEP_SUMMARY"
       - name: 60-Minuten-Aufnahme
         if: inputs.marathon
         run: |
           python scripts/bench/asr_diar_bench.py --scenarios sc --models bench-models --only stress_marathon --skip "" \
-            --no-asr-norm --emb wespeaker_en_voxceleb_resnet34_LM.onnx:0.35 --emb 3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx:0.4 \
+            --no-asr-raw --emb wespeaker_en_voxceleb_resnet34_LM.onnx:0.35 --emb 3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx:0.6 \
+            --seg model.int8.onnx --seg model.onnx \
             --out marathon.md
           { echo "## 60-Minuten-Aufnahme"; echo; cat marathon.md; } >> "$GITHUB_STEP_SUMMARY"

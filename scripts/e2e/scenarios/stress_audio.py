@@ -3,7 +3,7 @@
 Effekte, alle synthetisch und reproduzierbar (fester Zufallsstartwert):
   hall     Faltung mit einer synthetischen Raumimpulsantwort (frühe Reflexionen + exponentiell
            abklingender Nachhall, RT60 ~0,9 s, Direkt-/Hallanteil ~0 dB)
-  fern     Fernmikrofon: leichter Hall, Tiefpass 3 kHz, Pegel -30 dB, Rauschen (~15 dB SNR)
+  fern     Fernmikrofon: leichter Hall, Tiefpass 3 kHz, Pegel -30 dB, Rauschen (~20 dB SNR, Mikrofonrauschen)
   cafe     Stimmengewirr (viele leise, gefilterte TTS-Stimmen) + Geschirrklappern, ~8 dB SNR
   strasse  Verkehrsrauschen, vorbeifahrende Autos, Hupe, ~6 dB SNR
   alles    hall + fern + cafe
@@ -167,16 +167,16 @@ def effect(voices, x, kind):
     if kind == "fern":
         y = reverb(x, 0.5, -3.0)
         y = ss.lfilter(*ss.butter(4, 3000 / (SR / 2)), y).astype(np.float32)
-        y = mix_snr(y, pink(len(y)), 15)
-        return (y * 0.03 + rng.standard_normal(len(y)).astype(np.float32) * 0.0005).astype(np.float32)
+        y = mix_snr(y, pink(len(y)), 20)
+        return (y * 0.03 + rng.standard_normal(len(y)).astype(np.float32) * 0.0001).astype(np.float32)
     if kind == "cafe":
         return mix_snr(x, babble(voices, len(x)), 8)
     if kind == "strasse":
         return mix_snr(x, traffic(len(x)), 6)
     if kind == "alles":
-        y = mix_snr(reverb(x, 0.8, -2.0), babble(voices, len(x)), 10)
+        y = mix_snr(reverb(x, 0.8, -2.0), babble(voices, len(x)), 12)
         y = ss.lfilter(*ss.butter(4, 3000 / (SR / 2)), y).astype(np.float32)
-        return (y * 0.05 + rng.standard_normal(len(y)).astype(np.float32) * 0.0005).astype(np.float32)
+        return (y * 0.05 + rng.standard_normal(len(y)).astype(np.float32) * 0.0001).astype(np.float32)
     raise ValueError(kind)
 
 
