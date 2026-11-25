@@ -157,7 +157,7 @@ class ProtocolGenerator(private val model: TextModel) {
             .map { it.copy(owner = resolveOwner(it.owner, it.ref, segments, ::nameOf, it.text, known, mentioned)) }
         // Einzelne Wörter ("Verschiedenes") sind keine Aufgaben
         var tasks = refine(raws.flatMap { r -> runCatching { parseTasks(r, n) }.getOrDefault(emptyList()) }
-            .filter { it.text.trim().contains(' ') && !TranscriptRules.procedural(it.text) })
+            .filter { it.text.trim().contains(' ') && !TranscriptRules.procedural(it.text) && !TOPIC_LIKE(it.text) })
             // Beleg berichtet nur Erledigtes ("habe ich organisiert") und enthält keine Zusage: keine Aufgabe
             .filterNot { t -> t.ref in segments.indices && commitments.none { it.ref == t.ref } &&
                 TranscriptRules.reportedDone(t.text, segments[t.ref].text) }
@@ -221,8 +221,17 @@ class ProtocolGenerator(private val model: TextModel) {
             .distinctBy { it.lowercase() }
             .let { all -> all.filterNot { t -> all.any { u -> u != t && u.length > t.length &&
                 Regex("(?<![\\p{L}])${Regex.escape(t.lowercase())}(?![\\p{L}])").containsMatchIn(u.lowercase()) } } }  // "Schulz" neben "Frau Schulz"
+        // Klientin/Klient als Verantwortliche (kleine Modelle verwechseln Fall und Zuständige): neu ableiten
+        val clientNames = sensitive.flatMap { it.lowercase().split(' ') }.filter { it.length >= 3 && it !in staff }.toSet()
+        val ownedTasks = finalTasks.map { t ->
+            val surname = t.owner.substringAfterLast(' ').lowercase()
+            if (!GENERIC.matches(t.owner) && surname in clientNames)
+                t.copy(owner = resolveOwner("offen", t.ref, segments, ::nameOf, t.text, known, mentioned)
+                    .takeIf { it.substringAfterLast(' ').lowercase() !in clientNames } ?: "offen")
+            else t
+        }
         progress.update(1f, "Fertig")
-        return Result(summary, finalTasks, completed,
+        return Result(summary, ownedTasks, completed,
             completed.associate { it.taskId to (doneKeys[it.key] ?: -1) }, sensitive)
     }
 
@@ -350,6 +359,11 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
         private val ADDRESS = Regex("\\b(Frau|Herr|Herrn)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})")
         private val TASK_NAME = Regex("(?<!für |mit |von |bei |an |zu |über |um |gegen |ohne |und )\\b(Frau|Herr)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})")
         private val STAFF_ACTION = Regex("\\b(?:Frau|Herr)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})\\s+(?:übernimmt|organisiert|beantragt|kümmert sich|klärt|erstellt|bestellt|fordert|ruft|schreibt|meldet|prüft|kontaktiert|informiert|vereinbart|besorgt|holt|plant|dokumentiert|trägt)(?![\\p{L}])")
+        /** Stichpunkt statt Aufgabe ("Insulintherapie - Basalinsulin abends …"): Gliederungszeichen, kein Verb im Infinitiv */
+        private fun TOPIC_LIKE(text: String): Boolean = Regex("\\s[-–+]\\s").containsMatchIn(text) &&
+            !Regex("(?:^|\\s)\\p{Ll}\\p{L}+(?:en|ern|eln)\\b").containsMatchIn(text) &&
+            !Regex("^\\p{L}+(?:en|ern|eln)\\b").containsMatchIn(text.trim())
+
         /** "Person 2: …", "Frau Kaiser: …" – Sprecherzeile aus dem Transkript übernommen */
         private val SPEAKER_PREFIX = Regex("^\\s*(?:Person \\d+|Sprecher(?:in)? \\d+|(?:Frau|Herr)\\s+(?:Dr\\.\\s+)?[A-ZÄÖÜ][\\p{L}-]{1,30})\\s*:\\s*")
         private val DEFAULT_LABEL = Regex("^(Person|Sprecher(in)?) \\d+$")
@@ -458,7 +472,8 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
                 TranscriptRules.dueSupported(d, segments.joinToString(" ") { it.text }) }
                 ?.let { TranscriptRules.normalizeDue(it) } ?: "offen"
             val context = (t.ref - 1..t.ref + 1).mapNotNull { segments.getOrNull(it)?.text }.joinToString(" ")
-            if (t.due != "offen" && TranscriptRules.dueSupported(t.due, context)) return TranscriptRules.normalizeDue(t.due)
+            if (t.due != "offen" && TranscriptRules.dueSupported(t.due, context))
+                return TranscriptRules.normalizeDue(TranscriptRules.expandMonth(t.due, context))
             val sentence = sentenceFor(t.text, seg.text)
             // Kurze Antwort direkt danach ("Mache ich bis Mittwoch.")
             val answer = segments.getOrNull(t.ref + 1)?.takeIf {

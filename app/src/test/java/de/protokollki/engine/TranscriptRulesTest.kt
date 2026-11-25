@@ -336,4 +336,12 @@ class TranscriptRulesTest {
         assertTrue(TranscriptRules.reportedDone("Wagendefekt beheben", "Ich habe die Werkstatt gestern angerufen, die können erst am Donnerstag."))
         assertEquals(false, TranscriptRules.reportedDone("Werkstatt anrufen", "Ich habe vor, die Werkstatt anzurufen."))
     }
+
+    @Test
+    fun duesNeedTimeWordsAndKeepMonthQualifier() {
+        assertEquals(false, TranscriptRules.dueSupported("nach dem Artikel", "Ich schreibe den Artikel bis zum zehnten Januar."))
+        assertEquals("Ende Januar", TranscriptRules.expandMonth("Januar", "Klären Sie das bis Ende Januar."))
+        assertEquals("Januar", TranscriptRules.expandMonth("Januar", "Im Januar ziehen drei Mieter ein."))
+        assertTrue(TranscriptRules.reportedDone("Höherstufung beantragen", "Der Antrag auf Höherstufung ist gestellt, die Begutachtung ist am dritten März."))
+    }
 }

@@ -558,7 +558,6 @@ object TranscriptRules {
         "elft", "zwölft", "dreizehnt", "vierzehnt", "fünfzehnt", "sechzehnt", "siebzehnt", "achtzehnt", "neunzehnt",
         "zwanzigst", "einundzwanzigst", "zweiundzwanzigst", "dreiundzwanzigst", "vierundzwanzigst", "fünfundzwanzigst",
         "sechsundzwanzigst", "siebenundzwanzigst", "achtundzwanzigst", "neunundzwanzigst", "dreißigst", "einunddreißigst")
-    private const val MONTHS = "januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember"
     private val ORDINAL_DATE = rx("\\b(${ORDINALS.sortedByDescending { it.length }.joinToString("|")})(?:e|en|er|es|em)\\s+($MONTHS)\\b", true)
     private val MONTH_END = rx("\\b($MONTHS)ende\\b", true)
     private val DAY_ONLY = rx("^zum\\s+\\d{1,2}\\.?$", true)
@@ -592,10 +591,24 @@ object TranscriptRules {
      * Steht die Frist des Modells so im Gespräch (Beleg oder Nachbarbeitrag)? Erfundene oder selbst
      * umgerechnete Angaben ("nach dem Besuch", "26.11.2026") gelten als nicht belegt.
      */
+    private const val MONTHS = "januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember"
+    private val TIME_WORD = rx("\\d|\\b(?:$MONTHS|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|heute|morgen|übermorgen|woche|wochen|monat|monats|monaten|tag|tagen|jahr|jahres|quartal|sitzung|treffen|besprechung|uhr|ende|anfang|mitte|täglich|wöchentlich|monatlich|sofort|umgehend|zeitnah|bald|nächste\\p{L}*|kommende\\p{L}*|vor|nach\\s+(?:der|dem)\\s+(?:sitzung|treffen|besprechung|urlaub|ferien)|ferien|urlaub|wochenende|feiertag\\p{L}*|weihnacht\\p{L}*|ostern|silvester|früh|mittag|abend|nachmittag|vormittag)\\b", true)
+    private val BARE_MONTH = rx("^\\s*(?:im\\s+|bis\\s+)?($MONTHS)\\s*$", true)
+
+    /** "Januar", obwohl "bis Ende Januar" gesagt wurde -> "Ende Januar" */
+    fun expandMonth(due: String, context: String): String {
+        val m = BARE_MONTH.find(due) ?: return due
+        val month = m.groupValues[1]
+        val q = rx("\\b(Ende|Anfang|Mitte)\\s+$month\\b", true).findAll(context).map { it.groupValues[1].lowercase() }.distinct().toList()
+        return q.singleOrNull()?.let { "${it.replaceFirstChar { c -> c.uppercase() }} ${month.replaceFirstChar { c -> c.uppercase() }}" } ?: due
+    }
+
     fun dueSupported(due: String, context: String): Boolean {
         val words = rx("[\\p{L}\\d]+").findAll(normalizeDue(due).lowercase()).map { it.value }
             .filter { it !in DUE_FILLER && (it.length >= 2 || it[0].isDigit()) }.toList()
         if (words.isEmpty()) return true
+        // Ohne jede Zeitangabe ("nach dem Artikel") ist es keine Frist
+        if (!TIME_WORD.containsMatchIn(normalizeDue(due))) return false
         val ctx = cardinals(normalizeOrdinals(DAY_PART.replace(context, "$1 $2"))).lowercase()
         val ctxNumbers = rx("\\d+").findAll(ctx).map { it.value.trimStart('0') }.toSet()
         // Zahlen müssen stimmen ("2. Januar" ist nicht "zehnten Januar")
@@ -648,7 +661,7 @@ object TranscriptRules {
     private val NOT_DONE = rx("\\b(noch offen|nicht erledigt|noch nicht|warte(n)? noch|steht noch aus|fehlt noch|bleibt offen)\\b",
         true)
 
-    private val STATE_DONE = rx("\\b(?:ist|sind)\\s+(?:schon\\s+|bereits\\s+)?(?:unterschrieben|abgeschlossen|erledigt|bestellt|verschickt|eingereicht|ge\\p{L}{2,}(?:t|en))\\s*(?:[.!;]|$)", true)
+    private val STATE_DONE = rx("\\b(?:ist|sind)\\s+(?:schon\\s+|bereits\\s+)?(?:unterschrieben|abgeschlossen|erledigt|bestellt|verschickt|eingereicht|ge\\p{L}{2,}(?:t|en))\\s*(?:[.!;,]|$)", true)
     private val REPORTED = rx("\\b(?:(?:habe|haben)\\s+(?:ich|wir)|(?:ich|wir)\\s+(?:habe|haben))\\b(?![^,.;]*\\b(?:bis|noch nicht|nicht)\\b)[^,.;]*\\b(?:ge\\p{L}{2,}(?:t|en)|\\p{L}{2,}ge\\p{L}{2,}en|\\p{L}{3,}iert|abgeschlossen|erledigt)\\s*(?:[,.;!]|$)", true)
 
     /**
