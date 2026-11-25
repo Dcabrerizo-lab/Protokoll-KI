@@ -13,8 +13,12 @@ android {
         applicationId = "de.protokollki"
         minSdk = 28
         targetSdk = 36
-        versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
-        versionName = "1.0.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
+        // Verkaufsversion (store.yml): eigener, stetig steigender Zähler ab 100000, damit Play-Store-
+        // Uploads immer über den Test-Builds liegen. Versionsname aus dem Tag (z. B. v1.2.0 -> 1.2.0).
+        val run = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+        val storeBuild = System.getenv("PK_STORE_BUILD") == "1"
+        versionCode = if (storeBuild) 100_000 + run else run
+        versionName = System.getenv("PK_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.0.$run"
 
         // Instrumentierte Tests auf dem Gerät/Emulator (app/src/androidTest)
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -55,17 +59,28 @@ android {
     signingConfigs {
         create("release") {
             // Fester Schlüssel im Repo, damit Updates sich über die alte Version installieren lassen.
+            // Achtung: Schlüssel und Passwort sind öffentlich, also nur für Test- und Demo-Builds.
             storeFile = file("../keystore/protokollki.jks")
             storePassword = "protokollki"
             keyAlias = "protokollki"
             keyPassword = "protokollki"
+        }
+        // Verkaufsversion: geheimer Schlüssel aus GitHub-Secrets (siehe docs/vertrieb/signatur.md).
+        // Ist PK_KEYSTORE_FILE nicht gesetzt, bleibt alles wie bisher (Test-Schlüssel).
+        System.getenv("PK_KEYSTORE_FILE")?.takeIf { it.isNotBlank() && file(it).exists() }?.let { ks ->
+            create("store") {
+                storeFile = file(ks)
+                storePassword = System.getenv("PK_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("PK_KEY_ALIAS")
+                keyPassword = System.getenv("PK_KEY_PASSWORD") ?: System.getenv("PK_KEYSTORE_PASSWORD")
+            }
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.findByName("store") ?: signingConfigs.getByName("release")
         }
         debug {
             signingConfig = signingConfigs.getByName("release")

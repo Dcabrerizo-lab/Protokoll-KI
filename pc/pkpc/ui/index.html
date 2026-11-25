@@ -588,10 +588,25 @@ async function openSettings() {
     </div>
     <label class="row" style="margin:6px 0"><input type="checkbox" id="stTrack" ${st.trackTasks ? "checked" : ""}> Offene Aufgaben früherer Besprechungen abgleichen</label>
     <label class="row" style="margin:6px 0 16px"><input type="checkbox" id="stWatch" ${st.watchDownloads ? "checked" : ""}> Download-Ordner auf Aufnahmen vom Handy prüfen</label>
-    <p class="muted" style="font-size:13px">Ergebnisse: ${esc(S.outputDir)} · Version ${esc(S.version)}<br>Protokoll KI nutzt das Internet nur für das einmalige Laden der KI. Aufnahmen und Protokolle verlassen den PC nie.</p>
+    <p class="muted" style="font-size:13px">Ergebnisse: ${esc(S.outputDir)} · Version ${esc(S.version)}<br>Protokoll KI nutzt das Internet nur für das einmalige Laden der KI. Aufnahmen und Protokolle verlassen den PC nie.<br>
+      <a href="#" onclick="showLegal('datenschutz');return false">Datenschutz</a> ·
+      <a href="#" onclick="showLegal('lizenzen');return false">Open-Source-Lizenzen</a> ·
+      <a href="#" onclick="showLegal('impressum');return false">Impressum</a></p>
     <div class="row"><button class="btn small" onclick="api('/api/open',{kind:'outputDir'})">Ergebnisordner öffnen</button>
     ${S.platform !== "win32" ? `<button class="btn small" onclick="quitApp()">Programm beenden</button>` : ""}<span class="spacer"></span>
     <button class="btn" onclick="closeModal()">Abbrechen</button><button class="btn primary" onclick="saveSettings()">Speichern</button></div>`);
+}
+async function showLegal(doc) {
+  let text = "";
+  try { text = (await api("/api/legal/" + doc)).text; } catch (e) { text = "Text nicht gefunden."; }
+  const html = text.split("\n").map(l => {
+    if (l.startsWith("## ")) return `<h3 style="margin:16px 0 4px">${esc(l.slice(3))}</h3>`;
+    if (l.startsWith("# ")) return `<h2 style="margin:0 0 8px">${esc(l.slice(2))}</h2>`;
+    if (l.startsWith("- ")) return `<div style="margin:2px 0 2px 14px">• ${esc(l.slice(2))}</div>`;
+    return l.trim() ? `<p style="margin:4px 0">${esc(l)}</p>` : "";
+  }).join("");
+  modal(`<div style="max-height:65vh;overflow:auto;font-size:14px;line-height:1.5">${html}</div>
+    <div class="row" style="margin-top:14px"><span class="spacer"></span><button class="btn" onclick="openSettings()">Zurück</button></div>`);
 }
 async function quitApp() {
   await api("/api/quit", {});

@@ -32,6 +32,8 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.SdStorage
@@ -88,7 +90,11 @@ import de.protokollki.ui.hasPermission
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenVoices: () -> Unit = {}) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onOpenVoices: () -> Unit = {},
+    onOpenLegal: (LegalDoc) -> Unit = {},
+) {
     val context = LocalContext.current
     val settings by AppSettings.state.collectAsStateWithLifecycle()
     val voiceProfiles by VoiceProfiles.profiles.collectAsStateWithLifecycle()
@@ -425,6 +431,12 @@ fun SettingsScreen(onBack: () -> Unit, onOpenVoices: () -> Unit = {}) {
             item(key = "about") {
                 SettingsGroup("Über") {
                     InfoRow(Icons.Filled.Info, "Protokoll KI", "Version $version")
+                    LinkRow(Icons.Filled.Lock, "Datenschutzerklärung") { onOpenLegal(LegalDoc.PRIVACY) }
+                    LinkRow(Icons.Filled.Description, "Open-Source-Lizenzen") { onOpenLegal(LegalDoc.LICENSES) }
+                    LinkRow(Icons.Filled.Business, "Impressum") { onOpenLegal(LegalDoc.IMPRINT) }
+                    LinkRow(Icons.Filled.BugReport, "Absturzbericht senden") {
+                        de.protokollki.CrashReporter.shareLatest(context)
+                    }
                 }
             }
         }
@@ -568,6 +580,37 @@ private fun PrivacyPoint(icon: ImageVector, text: String) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun LinkRow(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.secondaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                icon, contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(Modifier.width(14.dp))
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Icon(
+            Icons.Filled.ChevronRight, contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

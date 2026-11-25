@@ -34,12 +34,16 @@ Die App wählt automatisch das passende Paket nach Arbeitsspeicher, in den Einst
 |---|---|---|---|---|
 | Ultra | z. B. Galaxy S24 Ultra, S25 Ultra, Pixel 9 Pro (ab 12 GB RAM) | Whisper large-v3-turbo | Qwen3 8B | ca. 5,6 GB |
 | Premium | z. B. Galaxy S23, S23+, S24, Pixel 8 (8 GB RAM) | Whisper large-v3-turbo | Qwen3 4B Instruct | ca. 3,1 GB |
-| Standard | z. B. Galaxy A54, A55, Pixel 6a (6 GB RAM) | Whisper small | Qwen2.5 3B | ca. 2,8 GB |
+| Standard | z. B. Galaxy A54, A55, Pixel 6a (6 GB RAM) | Parakeet | Qwen3 4B (Q3) | ca. 2,8 GB |
 | Kompakt | ältere Handys (4 GB RAM) | Whisper base | Qwen2.5 1.5B | ca. 1,4 GB |
 
 ## Datenschutz
 - Die Internet-Berechtigung wird ausschließlich für den einmaligen Modell-Download genutzt.
 - Aufnahmen, Transkripte und Protokolle liegen nur im privaten App-Speicher; Cloud-Backup ist deaktiviert.
+- Datenschutzerklärung, Lizenzen und Impressum: in der App unter Einstellungen → Über (Texte in `app/src/main/assets/legal/`).
+
+## Verkauf
+Checkliste, Lizenz-Audit, Signatur und Play-Store-Texte: [docs/vertrieb](docs/vertrieb/README.md).
 
 ## Technik
 Kotlin + Jetpack Compose · [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Whisper, pyannote-Segmentierung, Sprecher-Embeddings) · [llama.cpp](https://github.com/ggml-org/llama.cpp) für das lokale Sprachmodell (GGUF).
