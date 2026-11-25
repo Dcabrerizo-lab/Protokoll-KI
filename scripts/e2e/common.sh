@@ -145,6 +145,18 @@ fill_disk() {
 }
 free_disk() { adb shell "rm -f /data/local/tmp/fill*"; }
 # Wie tap_text, scrollt aber bis zu 4-mal nach unten, falls das Element (noch) nicht sichtbar ist
+# Wie ui_has, scrollt aber bis zu 3-mal nach unten (Karten liegen auf kleinen Bildschirmen unter dem Rand)
+ui_has_scroll() {
+  local wh w h
+  ui_has "$1" && return 0
+  wh=$(adb shell wm size 2>/dev/null | tr -d '\r' | awk -F'[ x]' '/size/{print $(NF-1)" "$NF}' | tail -1)
+  w=${wh% *}; h=${wh#* }; [ -z "$w" ] && { w=1080; h=1920; }
+  for _ in 1 2 3; do
+    adb shell input swipe $((w / 2)) $((h * 3 / 5)) $((w / 2)) $((h / 5)) 600; sleep 1
+    ui_has "$1" && return 0
+  done
+  return 1
+}
 tap_scroll() {
   local wh w h
   tap_text "$1" && return 0

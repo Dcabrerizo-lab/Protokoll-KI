@@ -151,7 +151,7 @@ if [ -z "$kid" ]; then fail "[Abschuss] Import fehlgeschlagen"; else
   shot stress-abschuss-fehler
   # Über die Oberfläche erneut versuchen
   open_meeting "abschuss"
-  if ui_has "Erneut versuchen"; then pass "[Abschuss] Fehlerkarte mit „Erneut versuchen“ sichtbar"
+  if ui_has_scroll "Erneut versuchen"; then pass "[Abschuss] Fehlerkarte mit „Erneut versuchen“ sichtbar"
   else fail "[Abschuss] „Erneut versuchen“ nicht sichtbar"; fi
   retry_ui "$kid"
   # Zweiter Abschuss im Protokoll-Schritt: Transkript bleibt, erneuter Versuch schreibt nur das Protokoll
@@ -176,8 +176,8 @@ sleep 2
 screen_on
 cid=$(import_file "$SC/folgesitzung.wav" akku.wav false)
 sleep 4; shot stress-akku
-ui_has "Akku bei 5" || info "Oberfläche: $(ui_texts)"
-if ui_has "Akku bei 5"; then pass "[Akku] Warnung vor der Verarbeitung sichtbar (5 %, ohne Ladegerät)"
+ui_has_scroll "Akku bei 5" || info "Oberfläche: $(ui_texts)"
+if ui_has_scroll "Akku bei 5"; then pass "[Akku] Warnung vor der Verarbeitung sichtbar (5 %, ohne Ladegerät)"
 else fail "[Akku] keine Akku-Warnung bei 5 % ohne Ladegerät"; fi
 tap_scroll "Jetzt verarbeiten" || fail "[Akku] Knopf „Jetzt verarbeiten“ nicht gefunden"
 sleep 5
