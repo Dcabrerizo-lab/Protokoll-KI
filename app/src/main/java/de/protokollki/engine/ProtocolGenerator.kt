@@ -200,8 +200,8 @@ class ProtocolGenerator(private val model: TextModel) {
             fun grounded(t: TaskItem) = segments.getOrNull(t.ref)?.let { (contentWords(t.text) intersect contentWords(it.text)).size } ?: 0
             all.filterNot { t -> !GENERIC.matches(t.owner) && !committed(t) && all.any { u -> u !== t &&
                 u.owner.equals(t.owner, true) && committed(u) && TranscriptRules.sharedNouns(t.text, u.text).isNotEmpty() } }
-                // Gleicher Beleg, gleiche Person: die Formulierung, die zum Beleg passt, gewinnt
-                .let { kept -> kept.filterNot { t -> grounded(t) < 2 && kept.any { u -> u !== t && u.ref == t.ref &&
+                // Gleicher Beleg, gleiche Person: eine Formulierung ohne jeden Bezug zum Beleg weicht der passenden
+                .let { kept -> kept.filterNot { t -> grounded(t) == 0 && kept.any { u -> u !== t && u.ref == t.ref &&
                     u.owner.equals(t.owner, true) && grounded(u) >= 2 } } }
         }
         // Team = Sprechende, Eingeladene und ausdrücklich Beauftragte. Verantwortliche aus der Modellausgabe zählen
@@ -466,6 +466,7 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
                 ?: TranscriptRules.softDeadline(t.text.substringBefore("("))
                 ?: TranscriptRules.softDeadline(own)
                 ?: answer?.let { TranscriptRules.softDeadline(it.text) }
+                ?: TranscriptRules.eventDeadline(sentence)
                 ?: "offen"
         }
 

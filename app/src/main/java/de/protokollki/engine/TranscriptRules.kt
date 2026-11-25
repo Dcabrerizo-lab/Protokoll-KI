@@ -311,8 +311,10 @@ object TranscriptRules {
     fun explicitOwner(ref: Int, segments: List<Segment>, names: Map<Int, String>, taskText: String): String? {
         val seg = segments.getOrNull(ref) ?: return null
         val sentence = sentenceFor(taskText, seg.text)
-        if ((stems(sentence) intersect stems(taskText)).size < 2) return null
+        val shared = (stems(sentence) intersect stems(taskText)).size
+        if (shared < 1) return null
         assignedName(sentence)?.takeIf { !it.equals(names[seg.speakerId], true) }?.let { return it }
+        if (shared < 2) return null
         val selfAt = SELF_COMMIT.find(sentence)?.range?.first ?: return null
         val reqAt = listOfNotNull(REQUEST.find(sentence)?.range?.first, PLEASE_DO.find(sentence)?.range?.first).minOrNull()
         return if (reqAt == null || selfAt < reqAt) names[seg.speakerId] else null
@@ -389,7 +391,19 @@ object TranscriptRules {
                 else -> null
             }
             kind?.let { Commitment(i, sen, it) }
-        }
+        }.flatMap { c -> if (c.kind == Kind.ASSIGN) splitAssignment(c) else listOf(c) }
+    }
+
+    private val AND_STAFF_VERB = rx(",?\\s+und\\s+(?=(?:$STAFF_VERBS)\\b)")
+
+    /** "Frau Wolf fordert … an und bestellt …" -> zwei Aufträge an Frau Wolf */
+    private fun splitAssignment(c: Commitment): List<Commitment> {
+        val m = STAFF_DOES.find(c.sentence) ?: return listOf(c)
+        val name = ADDRESS.find(m.value)?.value ?: return listOf(c)
+        val parts = AND_STAFF_VERB.split(c.sentence.substring(m.range.first))
+        if (parts.size < 2) return listOf(c)
+        return listOf(c.copy(sentence = c.sentence.substring(0, m.range.first) + parts[0])) +
+            parts.drop(1).map { c.copy(sentence = "$name $it") }
     }
 
     private val ANAPHORIC = rx("^(?:ja|gut|okay|gerne|klar)?\\s*,?\\s*(?:das|die|den|dies|es)\\s+(?:kann|mache|übernehme|erledige|kläre|machen)\\s+(?:ich|wir)\\b", true)
@@ -566,6 +580,8 @@ object TranscriptRules {
     fun normalizeDue(text: String): String {
         var t = MONTH_END.replace(normalizeOrdinals(text)) { m -> "Ende ${m.groupValues[1].replaceFirstChar { it.uppercase() }}" }
         if (THIS_WEEK.containsMatchIn(t) && !t.contains("ende", ignoreCase = true)) t = "Ende dieser Woche"
+        // "um vierzehn Uhr" -> "um 14 Uhr"
+        t = CLOCK.replace(t) { m -> cardinals(m.value) }
         return t
     }
 
@@ -591,6 +607,11 @@ object TranscriptRules {
             (minOf(x.length, w.length) >= 4 && (x.startsWith(w) || w.startsWith(x)) && kotlin.math.abs(x.length - w.length) <= 2) } }
     }
 
+    private val CLOCK = rx("\\b(?:zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf|dreizehn|vierzehn|fünfzehn|sechzehn|siebzehn|achtzehn|neunzehn|zwanzig)\\s+uhr\\b", true)
+    private val PAST = rx("\\b(?:hat|hatte|hatten|haben|war|waren|wurde|wurden)\\b", true)
+
+    /** Zeitangabe aus dem ganzen Satz, wenn er kein Geschehen schildert ("kommt morgen früh, bitte annehmen") */
+    fun eventDeadline(sentence: String): String? = sentence.takeIf { !PAST.containsMatchIn(it) }?.let { softDeadline(it) }
     private val CARDINAL = rx("\\b(zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf|dreizehn|vierzehn|fünfzehn|sechzehn|siebzehn|achtzehn|neunzehn|zwanzig)\\b", true)
 
     /** "um vierzehn Uhr" -> "um 14 Uhr" (nur für Vergleiche und Uhrzeiten) */
@@ -628,7 +649,7 @@ object TranscriptRules {
         true)
 
     private val STATE_DONE = rx("\\b(?:ist|sind)\\s+(?:schon\\s+|bereits\\s+)?(?:unterschrieben|abgeschlossen|erledigt|bestellt|verschickt|eingereicht|ge\\p{L}{2,}(?:t|en))\\s*(?:[.!;]|$)", true)
-    private val REPORTED = rx("\\b(?:habe|haben)\\s+(?:ich|wir)\\b(?!.*\\b(?:bis|noch nicht|nicht)\\b).*\\b(?:ge\\p{L}{2,}t|\\p{L}{3,}iert|abgeschlossen|erledigt)\\s*[.!]?$", true)
+    private val REPORTED = rx("\\b(?:(?:habe|haben)\\s+(?:ich|wir)|(?:ich|wir)\\s+(?:habe|haben))\\b(?![^,.;]*\\b(?:bis|noch nicht|nicht)\\b)[^,.;]*\\b(?:ge\\p{L}{2,}(?:t|en)|\\p{L}{2,}ge\\p{L}{2,}en|\\p{L}{3,}iert|abgeschlossen|erledigt)\\s*(?:[,.;!]|$)", true)
 
     /**
      * Der Belegsatz berichtet nur über bereits Geschehenes ("Für die Fortbildung habe ich den Kurs organisiert."):

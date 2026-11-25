@@ -314,4 +314,26 @@ class TranscriptRulesTest {
         assertEquals(false, TranscriptRules.procedural("Raum für die nächste Sitzung buchen"))
         assertTrue(TranscriptRules.reportedDone("Mietvertrag erledigen", "Der Mietvertrag für das neue Büro ist unterschrieben. Einzug ist am ersten Februar."))
     }
+
+    @Test
+    fun assignmentWithTwoActionsGivesTwoTasks() {
+        val s = segs(1 to "Dann beschließen wir: Frau Wolf fordert beim Hausarzt eine Folgeverordnung an und bestellt die Wechseldruckmatratze über das Sanitätshaus.")
+        val c = TranscriptRules.commitments(s)
+        assertEquals(2, c.size)
+        assertEquals("Frau Wolf bestellt die Wechseldruckmatratze über das Sanitätshaus.", c[1].sentence)
+        assertEquals("Beim Hausarzt eine Folgeverordnung anfordern", TranscriptRules.phraseTask(c[0].sentence))
+    }
+
+    @Test
+    fun clockTimesAndEventDeadlines() {
+        assertEquals("um 14 Uhr", TranscriptRules.normalizeDue("um vierzehn Uhr"))
+        assertEquals("morgen früh", TranscriptRules.eventDeadline("Die Medikamentenlieferung kommt morgen früh, bitte annehmen."))
+        assertNull(TranscriptRules.eventDeadline("Frau Lehmann hat heute wenig getrunken, bitte auf Flüssigkeit achten."))
+    }
+
+    @Test
+    fun reportedCallIsNoTask() {
+        assertTrue(TranscriptRules.reportedDone("Wagendefekt beheben", "Ich habe die Werkstatt gestern angerufen, die können erst am Donnerstag."))
+        assertEquals(false, TranscriptRules.reportedDone("Werkstatt anrufen", "Ich habe vor, die Werkstatt anzurufen."))
+    }
 }
