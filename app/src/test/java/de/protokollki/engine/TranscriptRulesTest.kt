@@ -216,4 +216,38 @@ class TranscriptRulesTest {
         assertEquals(listOf(0, 2, 3, 3), TranscriptRules.commitments(s).map { it.ref })
         assertEquals("Ich schreibe bis Freitag den Bericht für den Vorstand.", TranscriptRules.commitments(s)[1].sentence)
     }
+
+    @Test
+    fun phrasesTasksFromSentences() {
+        val cases = mapOf(
+            "Können Sie den Wochenplan bis Mittwoch fertig machen und aushängen?" to "Den Wochenplan bis Mittwoch fertig machen und aushängen",
+            "Prima, dann laden Sie bitte alle bis Ende der Woche ein." to "Alle bis Ende der Woche einladen",
+            "Herr Brandt, kümmern Sie sich bitte um den Drucker und klären Sie das mit dem Händler." to "Sich um den Drucker kümmern und das mit dem Händler klären",
+            "Gut, ich messe um zehn Uhr noch einmal den Blutdruck und gebe der Ärztin den Wert." to "Um zehn Uhr noch einmal den Blutdruck messen und der Ärztin den Wert geben",
+            "Ich melde beide bis zum Monatsende beim Kurs an." to "Beide bis zum Monatsende beim Kurs anmelden",
+            "Ich kümmere mich um die Genehmigung beim Bauamt, bis Ende Mai." to "Sich um die Genehmigung beim Bauamt bis Ende Mai kümmern",
+            "Dann vereinbaren wir: Frau Wolf fordert beim Hausarzt ein Rezept an und bestellt das Pflegebett." to "Beim Hausarzt ein Rezept anfordern und das Pflegebett bestellen",
+            "Kontrolle in zwei Wochen, Herr Neumann übernimmt das Assessment." to "Das Assessment übernehmen (Kontrolle in zwei Wochen)",
+            "Die Lieferung kommt morgen früh, bitte annehmen." to "Die Lieferung kommt morgen früh: annehmen",
+            "Herr Lange hat heute wenig gegessen, bitte auf die Mahlzeiten achten." to "Auf die Mahlzeiten achten (Herr Lange hat heute wenig gegessen)",
+        )
+        cases.forEach { (sentence, expected) -> assertEquals(sentence, expected, TranscriptRules.phraseTask(sentence)) }
+    }
+
+    @Test
+    fun softDeadlinesAndDecisionsAndHealthData() {
+        assertEquals("in zwei Wochen", TranscriptRules.softDeadline("Evaluation in zwei Wochen, Herr Neumann übernimmt."))
+        assertEquals("um 14 Uhr", TranscriptRules.softDeadline("Ich messe um vierzehn Uhr noch einmal Fieber."))
+        assertEquals("Ende dieser Woche", TranscriptRules.softDeadline("Er organisiert das, möglichst diese Woche."))
+        assertNull(TranscriptRules.softDeadline("Guten Morgen, wir beginnen."))
+        assertNull(TranscriptRules.softDeadline("Heute oder morgen."))
+        val s = segs(0 to "Dann beschließen wir: Die Schulung findet online statt. Danke, dann ist das beschlossen.",
+            1 to "Diagnosen Diabetes mellitus Typ zwei, Herzinsuffizienz und beginnende Demenz. Pflegegrad drei.")
+        assertEquals(listOf("Die Schulung findet online statt." to 0), TranscriptRules.explicitDecisions(s))
+        assertEquals(listOf("Diabetes mellitus Typ zwei", "Herzinsuffizienz", "beginnende Demenz", "Pflegegrad drei"),
+            TranscriptRules.healthData(s))
+        // Zahlen müssen stimmen
+        assertEquals(false, TranscriptRules.dueSupported("2. Januar", "Ich schreibe bis zum zehnten Januar einen Artikel."))
+        assertTrue(TranscriptRules.dueSupported("14:00 Uhr", "Ich messe um vierzehn Uhr Fieber."))
+    }
 }

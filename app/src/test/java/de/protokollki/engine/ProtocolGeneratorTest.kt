@@ -143,12 +143,28 @@ class ProtocolGeneratorTest {
         assertTrue(noTasks != summaryJson)
         val model = FakeModel { _, grammar ->
             if (grammar!!.contains("zusammenfassung")) noTasks
-            else """{"aufgaben": [{"aufgabe": "Drei Angebote einholen [0]", "verantwortlich": "Frau Becker", "frist": "Freitag"}], "erledigte_aufgaben": [], "sensible_daten": []}"""
+            else """{"aufgaben": [{"aufgabe": "Schlüssel abgeben [0]", "verantwortlich": "Herr Wagner", "frist": "offen"}], "erledigte_aufgaben": [], "sensible_daten": []}"""
         }
-        val r = ProtocolGenerator(model).generate("Team", monday, segments, speakers, wantSummary = true) { _, _ -> true }
+        // Keine erkennbaren Zusagen im Transkript: eigener Aufgaben-Durchgang
+        val plain = listOf(Segment(0, 0f, 3f, "Der Schlüssel liegt noch im Büro."), Segment(1, 3f, 5f, "Das sollte sich jemand ansehen."))
+        val r = ProtocolGenerator(model).generate("Team", monday, plain, speakers, wantSummary = true) { _, _ -> true }
         assertEquals(2, model.prompts.size)
         assertEquals("Kurz.", r.summary.overview)
-        assertEquals(listOf("Drei Angebote einholen"), r.tasks.map { it.text })
+        assertEquals(listOf("Schlüssel abgeben"), r.tasks.map { it.text })
+    }
+
+    @Test
+    fun missedCommitmentBecomesTaskWithoutExtraPass() {
+        val noTasks = summaryJson.replace(
+            """[{"aufgabe": "Drei Angebote einholen [0]", "verantwortlich": "Frau Becker", "frist": "Freitag"}]""", "[]")
+        val model = FakeModel { _, _ -> noTasks }
+        val r = ProtocolGenerator(model).generate("Team", monday, segments, speakers, wantSummary = true) { _, _ -> true }
+        assertEquals(1, model.prompts.size)
+        val t = r.tasks.single()
+        assertEquals("Bis Freitag drei Angebote einholen", t.text)
+        assertEquals("Frau Becker", t.owner)
+        assertEquals("Fr., 27.11.2026", t.due)
+        assertEquals(0, t.ref)
     }
 
     @Test

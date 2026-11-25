@@ -187,6 +187,8 @@ object TranscriptRules {
     private val ADDRESS = rx("\\b(Frau|Herr)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})")
     private val THANKS = rx("(?:danke|dankeschön|vielen dank|danke schön)(?:\\s+ihnen)?\\s*,?\\s*$", true)
     private val GREETING = rx("(?:hallo|guten morgen|guten tag|guten abend|willkommen|morgen)\\s*,?\\s*$", true)
+    /** Anrede ohne Komma (Spracherkennung): "Frau Becker können Sie …" */
+    private val BARE_VOCATIVE = rx("^\\s+(?:bitte\\s+)?(?i:können|könnten|würden|kümmern|übernehmen|holen|schalten|erstellen|bestellen|klären|laden|melden|schicken|senden|prüfen|bereiten|organisieren|tragen|rufen|schreiben|wie)\\s+(?:Sie|sieht|geht)\\b")
     private val SECOND_PERSON = rx("\\b(Sie|Ihnen|Ihr|Ihre|Ihren|bitte)\\b")
 
     private fun sentenceAround(text: String, pos: Int): String {
@@ -213,7 +215,8 @@ object TranscriptRules {
                 notMe.getOrPut(seg.speakerId) { mutableSetOf() } += name
                 val before = seg.text.substring(0, m.range.first)
                 val after = seg.text.substring(m.range.last + 1)
-                val vocative = after.isEmpty() || after[0] in ",?!" || (after[0] == '.' && THANKS.containsMatchIn(before))
+                val vocative = after.isEmpty() || after[0] in ",?!" || (after[0] == '.' && THANKS.containsMatchIn(before)) ||
+                    BARE_VOCATIVE.containsMatchIn(after)
                 if (!vocative) continue
                 val target = when {
                     THANKS.containsMatchIn(before) -> segments.getOrNull(i - 1)
@@ -251,14 +254,20 @@ object TranscriptRules {
         val seg = segments.getOrNull(ref) ?: return null
         fun who(spk: Int) = names[spk] ?: label(spk)
         val sentence = sentenceFor(taskText, seg.text)
-        // Anrede im Satz ("Frau Becker, bitte bestellen Sie …", "Frau Schmidt beantragt …")
-        ADDRESS.find(sentence)?.let { m ->
-            val name = formal(m.groupValues[1], m.groupValues[2])
+        // Anrede oder Zuweisung im Satz ("Frau Becker, bitte bestellen Sie …", "Frau Schmidt beantragt …")
+        assignedName(sentence)?.let { name ->
             if (!name.equals(names[seg.speakerId], true) && !name.equals(label(seg.speakerId), true)) return name
         }
         val self = SELF_COMMIT.containsMatchIn(sentence)
-        val request = REQUEST.containsMatchIn(sentence)
-        if (self && !request) return who(seg.speakerId)
+        val request = REQUEST.containsMatchIn(sentence) || PLEASE_DO.containsMatchIn(sentence)
+        if (self && !request) {
+            // Bloße Zusage ("Ja, das mache ich.") auf eine Bitte mit Anrede: die angesprochene Person
+            if (stems(SELF_COMMIT.replace(sentence, " ")).isEmpty()) {
+                val prev = segments.getOrNull(ref - 1)
+                if (prev != null && prev.speakerId != seg.speakerId) vocativeName(prev.text)?.let { return it }
+            }
+            return who(seg.speakerId)
+        }
         // Bitte ohne Namen: gemeint ist das Gegenüber (wer direkt antwortet, sonst wer zuvor sprach)
         if (request && !self) {
             val other = listOfNotNull(segments.getOrNull(ref + 1), segments.getOrNull(ref - 1))
@@ -268,6 +277,26 @@ object TranscriptRules {
         return null
     }
 
+    /** "Frau X, …" (Anrede mit Komma/Fragezeichen) oder "Frau X beantragt …" (Zuweisung), sonst null. */
+    fun assignedName(sentence: String): String? {
+        for (m in ADDRESS.findAll(sentence)) {
+            val after = sentence.substring(m.range.last + 1)
+            if (after.isNotEmpty() && after[0] in ",?!" || STAFF_VERB_AFTER.containsMatchIn(after) || BARE_VOCATIVE.containsMatchIn(after))
+                return formal(m.groupValues[1], m.groupValues[2])
+        }
+        return null
+    }
+
+    private fun vocativeName(text: String): String? = ADDRESS.findAll(text).firstOrNull { m ->
+        val after = text.substring(m.range.last + 1)
+        (after.isNotEmpty() && after[0] in ",?" || BARE_VOCATIVE.containsMatchIn(after)) &&
+            SECOND_PERSON.containsMatchIn(sentenceAround(text, m.range.first))
+    }?.let { formal(it.groupValues[1], it.groupValues[2]) }
+
+    /** Hat die Person [spk] im Umfeld des Belegs selbst etwas zugesagt? */
+    fun selfCommittedNear(spk: Int, ref: Int, segments: List<Segment>): Boolean =
+        (ref - 1..ref + 1).any { i -> segments.getOrNull(i)?.let { it.speakerId == spk && SELF_COMMIT.containsMatchIn(it.text) } == true }
+
     private fun sentenceFor(taskText: String, text: String): String {
         val sentences = text.split(rx("(?<=[.?!])\\s+")).filter { it.isNotBlank() }
         if (sentences.size <= 1 || taskText.isBlank()) return text
@@ -276,8 +305,12 @@ object TranscriptRules {
         return if ((stems(best) intersect w).isEmpty()) text else best
     }
 
-    data class Commitment(val ref: Int, val sentence: String)
+    enum class Kind { SELF, REQUEST, ASSIGN, PLEASE }
 
+    data class Commitment(val ref: Int, val sentence: String, val kind: Kind = Kind.SELF)
+
+    private const val STAFF_VERBS = "übernimmt|organisiert|beantragt|kümmert sich|klärt|erstellt|bestellt|fordert|ruft|schreibt|meldet|prüft|kontaktiert|informiert|besorgt|holt|plant|dokumentiert|trägt|schickt|lädt"
+    private val STAFF_VERB_AFTER = rx("^\\s+(?:$STAFF_VERBS)\\b")
     private val STAFF_DOES = rx("\\b(?:Frau|Herr)\\s+(?:Dr\\.\\s+)?[A-ZÄÖÜ][\\p{L}-]{1,30}\\s+(?:übernimmt|organisiert|beantragt|kümmert sich|klärt|erstellt|bestellt|fordert|ruft|schreibt|meldet|prüft|kontaktiert|informiert|besorgt|holt|plant|dokumentiert|trägt|schickt|lädt)\\b")
     private val PLEASE_DO = rx("\\bbitte\\s+(?:[\\p{L}-]+\\s+){0,5}[\\p{L}]+(?:en|ern|eln)\\s*[.!]?$", true)
 
@@ -288,11 +321,144 @@ object TranscriptRules {
      * Bloße Zusagen ohne Inhalt ("Ja, mache ich.") zählen nicht – dort steht die Aufgabe im Satz davor.
      */
     fun commitments(segments: List<Segment>): List<Commitment> = segments.flatMapIndexed { i, seg ->
-        seg.text.split(rx("(?<=[.?!])\\s+")).map { it.trim() }.filter { it.isNotEmpty() }.filter { sen ->
+        seg.text.split(rx("(?<=[.?!])\\s+")).map { it.trim() }.filter { it.isNotEmpty() }.mapNotNull { sen ->
             val content = stems(SELF_COMMIT.replace(sen, " ")).size
-            (SELF_COMMIT.containsMatchIn(sen) && content >= 2) || REQUEST.containsMatchIn(sen) ||
-                STAFF_DOES.containsMatchIn(sen) || PLEASE_DO.containsMatchIn(sen)
-        }.map { Commitment(i, it) }
+            val kind = when {
+                ANAPHORIC.containsMatchIn(sen) -> null      // "Das kann ich machen" – Inhalt steht im Beitrag davor
+                REQUEST.containsMatchIn(sen) -> Kind.REQUEST
+                STAFF_DOES.containsMatchIn(sen) -> Kind.ASSIGN
+                SELF_COMMIT.containsMatchIn(sen) && content >= 2 -> Kind.SELF
+                PLEASE_DO.containsMatchIn(sen) -> Kind.PLEASE
+                else -> null
+            }
+            kind?.let { Commitment(i, sen, it) }
+        }
+    }
+
+    private val ANAPHORIC = rx("^(?:ja|gut|okay|gerne|klar)?\\s*,?\\s*(?:das|die|den|dies|es)\\s+(?:kann|mache|übernehme|erledige|kläre|machen)\\s+(?:ich|wir)\\b", true)
+    private val DONE_BY_ME = rx("^(.{8,}?),\\s*(?:das|die|den|dies)\\s+(?:mache|übernehme|erledige|kläre)\\s+ich\\s*(.*)$", true)
+
+    /** Antwort auf eine Bitte ("Ja, mache ich bis Mittwoch.", "In Ordnung, …") */
+    fun isConfirmation(text: String): Boolean = CONFIRM.containsMatchIn(text) || SELF_COMMIT.containsMatchIn(text)
+
+    private val CONFIRM = rx("^\\s*(?:ja|jawohl|gerne|gern|mache ich|in ordnung|okay|ok|verstanden|klar|alles klar|wird gemacht|geht klar)\\b", true)
+
+    // ------------------------------------------------------------ Beschlüsse und Gesundheitsdaten
+
+    private val DECIDED = rx("\\b(?:beschließen wir|ist beschlossen|haben wir beschlossen|entscheiden wir|legen wir fest|wird beschlossen)\\s*[:,]?\\s*(.*)$", true)
+
+    /** Ausdrücklich gefasste Beschlüsse ("Dann beschließen wir: …") mit Inhalt und Beleg. */
+    fun explicitDecisions(segments: List<Segment>): List<Pair<String, Int>> = segments.flatMapIndexed { i, seg ->
+        seg.text.split(rx("(?<=[.?!])\\s+")).mapNotNull { sen ->
+            val body = DECIDED.find(sen)?.groupValues?.get(1)?.trim()?.trimEnd('.', '!', ' ') ?: return@mapNotNull null
+            if (stems(body).size < 2) null else body.replaceFirstChar { it.uppercase() } + "." to i
+        }
+    }
+
+    private val DIAGNOSES = rx("\\bDiagnosen?\\s*:?\\s+([^.;]+)", true)
+    private val CARE_LEVEL = rx("\\bPflegegrad\\s+(?:\\d|eins|zwei|drei|vier|fünf)\\b", true)
+
+    /** Genannte Diagnosen ("Diagnosen Diabetes mellitus Typ zwei, Herzinsuffizienz und Demenz") und Pflegegrade. */
+    fun healthData(segments: List<Segment>): List<String> = segments.flatMap { seg ->
+        DIAGNOSES.findAll(seg.text).flatMap { m ->
+            m.groupValues[1].split(rx(",\\s*|\\s+und\\s+")).map { it.trim() }
+                .filter { it.length >= 4 }
+        }.toList() + CARE_LEVEL.findAll(seg.text).map { it.value }.toList()
+    }.distinctBy { it.lowercase() }
+
+    // ------------------------------------------------------------ Aufgabentext aus einem Satz
+
+    private val FILLER = rx("^(?:dann vereinbaren wir|dann beschließen wir|wir vereinbaren|wir beschließen|vereinbaren wir|beschließen wir|noch ein hinweis|unter verschiedenes|in ordnung|sehr gut|vereinbart|allgemein|außerdem|ja|gut|prima|okay|ok|genau|also|und|dann|danke)\\s*[,:]?\\s+", true)
+    private val VOCATIVE_START = rx("^(?:Frau|Herr)\\s+(?:Dr\\.\\s+)?[\\p{L}-]+(?:\\s*,\\s*|\\s+(?=(?:bitte\\s+)?\\p{L}+\\s+Sie\\b))")
+    private val MODAL_Q = rx("^(?:können|könnten|würden)\\s+Sie\\s+(?:bitte\\s+)?(.+)$", true)
+    private val IMPERATIVE = rx("^(?:bitte\\s+)?([\\p{L}]+(?:en|ern|eln))\\s+Sie\\s+(sich\\s+)?(?:bitte\\s+)?(.+)$", true)
+    private val FIRST_PERSON = rx("^(?:das\\s+)?ich\\s+([\\p{L}]+e)\\s+(mich\\s+)?(.+)$", true)
+    private val AND_FIRST = rx("^([\\p{L}]+e)\\s+(.+)$")
+    private val THIRD_PERSON = rx("\\b(?:Frau|Herr)\\s+(?:Dr\\.\\s+)?[A-ZÄÖÜ][\\p{L}-]{1,30}\\s+($STAFF_VERBS)\\s+(.+)$")
+    private val AND_THIRD = rx("^($STAFF_VERBS)\\s+(.+)$")
+    private val PLEASE_TAIL = rx("^(.*?),?\\s*bitte\\s+(.+)$", true)
+    private val PARTICLES = setOf("an", "auf", "aus", "ab", "ein", "zu", "vor", "nach", "mit", "weiter", "fest", "zurück",
+        "um", "her", "hin", "weg", "los", "durch", "bereit", "fertig", "vorbei")
+    private val IRREGULAR_3SG = mapOf("übernimmt" to "übernehmen", "trägt" to "tragen", "lädt" to "laden",
+        "nimmt" to "nehmen", "gibt" to "geben", "hält" to "halten", "kümmert sich" to "kümmern")
+
+    private fun infinitiveFrom1sg(v: String) =
+        if (!v.endsWith("iere") && (v.endsWith("ere") || v.endsWith("ele"))) v.dropLast(1) + "n" else v + "n"
+
+    private val NOT_VERB = setOf("eine", "keine", "seine", "ihre", "meine", "deine", "unsere", "alle", "beide", "diese",
+        "jede", "welche", "einige", "viele", "andere", "dieselbe", "solche", "manche", "jene", "derselbe", "sowie", "ebenfalls")
+
+    private fun infinitiveFrom3sg(v: String): String = IRREGULAR_3SG[v.lowercase()] ?: when {
+        v.endsWith("iert") -> v.dropLast(1) + "en"
+        v.endsWith("ert") || v.endsWith("elt") -> v.dropLast(1) + "n"
+        v.endsWith("det") || v.endsWith("tet") -> v.dropLast(2) + "en"
+        v.endsWith("t") -> v.dropLast(1) + "en"
+        else -> v
+    }
+
+    /** "<Rest> <Verb>" mit abgetrennter Vorsilbe am Ende: "alle bis Freitag ein" + "laden" -> "alle bis Freitag einladen" */
+    private fun verbLast(rest: String, verb: String, reflexive: Boolean): String {
+        val words = rest.trim().split(rx("\\s+")).toMutableList()
+        val particle = words.lastOrNull()?.lowercase()?.takeIf { it in PARTICLES && words.size > 1 }
+        if (particle != null) words.removeAt(words.size - 1)
+        val v = (particle ?: "") + verb.lowercase()
+        return (if (reflexive) "sich " else "") + (words + v).joinToString(" ")
+    }
+
+    /**
+     * Formuliert eine Zusage oder einen Auftrag als Aufgabe im Infinitiv, ohne Sprachmodell:
+     * "Können Sie den Dienstplan bis Mittwoch aushängen?" -> "Den Dienstplan bis Mittwoch aushängen",
+     * "Ich melde beide beim Sprachkurs an." -> "Beide beim Sprachkurs anmelden",
+     * "Frau Wolf fordert eine Folgeverordnung an" -> "Eine Folgeverordnung anfordern".
+     * Unbekannte Satzformen bleiben (ohne Füllwörter) wörtlich stehen.
+     */
+    fun phraseTask(sentence: String): String {
+        var t = sentence.trim().trimEnd('.', '!', '?', ' ')
+        repeat(4) { t = FILLER.replace(t, "") }
+        t = VOCATIVE_START.replace(t, "")
+        repeat(2) { t = FILLER.replace(t, "") }
+        val out = DONE_BY_ME.find(t)?.let { m ->
+                val tail = m.groupValues[2].trim()
+                m.groupValues[1].trim() + if (tail.isNotEmpty()) " ($tail)" else ""
+            }
+            ?: MODAL_Q.find(t)?.groupValues?.get(1)
+            ?: IMPERATIVE.find(t)?.let { m ->
+                val parts = m.groupValues[3].split(rx("\\s+und\\s+"), limit = 2)
+                val first = verbLast(parts[0], m.groupValues[1], m.groupValues[2].isNotBlank())
+                if (parts.size == 2) IMPERATIVE.find(parts[1].trim())?.let { m2 ->
+                    "$first und ${verbLast(m2.groupValues[3], m2.groupValues[1], m2.groupValues[2].isNotBlank())}"
+                } ?: "$first und ${parts[1]}" else first
+            }
+            ?: FIRST_PERSON.find(t)?.let { m ->
+                val parts = m.groupValues[3].split(rx("\\s+und\\s+"), limit = 2)
+                val first = verbLast(parts[0], infinitiveFrom1sg(m.groupValues[1]), m.groupValues[2].isNotBlank())
+                if (parts.size == 2) AND_FIRST.find(parts[1].trim())?.takeIf { it.groupValues[1].length >= 4 &&
+                        it.groupValues[1].lowercase() !in NOT_VERB && it.groupValues[1][0].isLowerCase() }?.let { m2 ->
+                    "$first und ${verbLast(m2.groupValues[2], infinitiveFrom1sg(m2.groupValues[1]), false)}"
+                } ?: "$first und ${parts[1]}" else first
+            }
+            ?: THIRD_PERSON.find(t)?.let { m ->
+                val prefix = t.substring(0, m.range.first).trim().trimEnd(',', ':', ' ')
+                val verb = m.groupValues[1]
+                val parts = m.groupValues[2].split(rx("\\s+und\\s+"), limit = 2)
+                val first = verbLast(parts[0], infinitiveFrom3sg(verb), verb.startsWith("kümmert"))
+                val body = if (parts.size == 2) AND_THIRD.find(parts[1].trim())?.let { m2 ->
+                    "$first und ${verbLast(m2.groupValues[2], infinitiveFrom3sg(m2.groupValues[1]), false)}"
+                } ?: "$first und ${parts[1]}" else first
+                if (prefix.isNotEmpty() && !FILLER.containsMatchIn("$prefix ")) "$body ($prefix)" else body
+            }
+            ?: PLEASE_TAIL.find(t)?.takeIf { PLEASE_DO.containsMatchIn(t) }?.let { m ->
+                val ctx = m.groupValues[1].trim().trimEnd(',', ':')
+                val todo = m.groupValues[2].trim()
+                when {
+                    ctx.isEmpty() -> todo
+                    todo.contains(' ') -> "$todo ($ctx)"
+                    else -> "$ctx: $todo"
+                }
+            }
+            ?: t
+        val clean = out.replace(",", "").replace(rx("\\s+"), " ").trim()
+        return clean.replaceFirstChar { it.uppercase() }
     }
 
     // ------------------------------------------------------------ Fristen
@@ -306,13 +472,17 @@ object TranscriptRules {
         "sechsundzwanzigst", "siebenundzwanzigst", "achtundzwanzigst", "neunundzwanzigst", "dreißigst", "einunddreißigst")
     private const val MONTHS = "januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember"
     private val ORDINAL_DATE = rx("\\b(${ORDINALS.sortedByDescending { it.length }.joinToString("|")})(?:e|en|er|es|em)\\s+($MONTHS)\\b", true)
+    private val DAY_ONLY = rx("^zum\\s+\\d{1,2}\\.?$", true)
     private val DOTTED_DATE = rx("(\\d{1,2})\\.\\s+($MONTHS)\\b", true)
     private val DAY_MONTH = rx("(\\d{1,2})\\s+($MONTHS)\\b", true)
     private val THIS_WEEK = rx("\\b(?:in\\s+)?(?:noch\\s+)?diese[rn]?\\s+woche\\b", true)
 
-    /** "zum zwanzigsten Dezember" -> "zum 20. Dezember" */
-    fun normalizeOrdinals(text: String): String = ORDINAL_DATE.replace(text) { m ->
-        "${ORDINALS.indexOf(m.groupValues[1].lowercase()) + 1}. ${m.groupValues[2]}"
+    private val ORDINAL_DAY = rx("\\b(zum|am|ab)\\s+(${ORDINALS.sortedByDescending { it.length }.joinToString("|")})(?:e|en|er|es|em)\\b(?!\\s+(?:mal|schritt|punkt|teil|termin))", true)
+
+    /** "zum zwanzigsten Dezember" -> "zum 20. Dezember", "bis zum fünfzehnten" -> "bis zum 15." */
+    fun normalizeOrdinals(text: String): String {
+        val t = ORDINAL_DATE.replace(text) { m -> "${ORDINALS.indexOf(m.groupValues[1].lowercase()) + 1}. ${m.groupValues[2]}" }
+        return ORDINAL_DAY.replace(t) { m -> "${m.groupValues[1]} ${ORDINALS.indexOf(m.groupValues[2].lowercase()) + 1}." }
     }
 
     /** Frist: "zwanzigsten Dezember" -> "20. Dezember", "möglichst diese Woche" -> "Ende dieser Woche". */
@@ -331,10 +501,28 @@ object TranscriptRules {
      */
     fun dueSupported(due: String, context: String): Boolean {
         val words = rx("[\\p{L}\\d]+").findAll(normalizeDue(due).lowercase()).map { it.value }
-            .filter { it !in DUE_FILLER && it.length >= 2 }.toList()
+            .filter { it !in DUE_FILLER && (it.length >= 2 || it[0].isDigit()) }.toList()
         if (words.isEmpty()) return true
-        val ctx = normalizeOrdinals(context).lowercase()
+        val ctx = cardinals(normalizeOrdinals(context)).lowercase()
+        val ctxNumbers = rx("\\d+").findAll(ctx).map { it.value.trimStart('0') }.toSet()
+        // Zahlen müssen stimmen ("2. Januar" ist nicht "zehnten Januar")
+        val numbers = words.filter { w -> w.all { it.isDigit() } }.map { it.trimStart('0') }.filter { it.isNotEmpty() }
+        if (numbers.any { it !in ctxNumbers }) return false
         return words.any { w -> ctx.contains(if (w.length > 5) w.take(5) else w) }
+    }
+
+    private val CARDINAL = rx("\\b(zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf|dreizehn|vierzehn|fünfzehn|sechzehn|siebzehn|achtzehn|neunzehn|zwanzig)\\b", true)
+
+    /** "um vierzehn Uhr" -> "um 14 Uhr" (nur für Vergleiche und Uhrzeiten) */
+    private fun cardinals(text: String) = CARDINAL.replace(text) { number(it.value)?.toString() ?: it.value }
+
+    private val SOFT_DUE = rx("(?<!guten\\s)\\b(in\\s+(?:einem|einer|zwei|drei|vier|fünf|sechs|acht|zehn|\\d+)\\s+(?:tagen|tag|wochen|woche|monaten|monat)|heute(?:\\s+noch)?|übermorgen|morgen(?:\\s+früh)?|nächste[nr]?\\s+woche|(?:noch\\s+)?diese\\s+woche|täglich|um\\s+(?:\\d{1,2}|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf|dreizehn|vierzehn|fünfzehn|sechzehn|siebzehn|achtzehn|neunzehn|zwanzig)\\s+uhr)\\b", true)
+
+    /** Zeitangabe ohne "bis" ("in zwei Wochen", "heute noch", "um vierzehn Uhr", "täglich"), nur wenn eindeutig. */
+    fun softDeadline(text: String): String? {
+        val found = SOFT_DUE.findAll(text).map { it.value.trim() }.distinctBy { it.lowercase() }.toList()
+        val one = found.singleOrNull() ?: return null
+        return normalizeDue(if (one.lowercase().endsWith("uhr")) cardinals(one) else one)
     }
 
     /** Eindeutige Frist aus dem Beleg ("bis Freitag", "bis Ende März"), sonst null. */
@@ -344,10 +532,12 @@ object TranscriptRules {
         val found = DEADLINE.findAll(text).mapNotNull { m ->
             val words = m.groupValues[1].trim().split(rx("\\s+"))
             // kürzester Anfang, den der DateResolver versteht ("bis Freitag drei Angebote" -> "Freitag")
-            (1..minOf(4, words.size)).map { words.take(it).joinToString(" ") }
-                .firstOrNull { DateResolver.parse(it, meeting) != null || it.lowercase().endsWith("sitzung") }
+            val cands = (1..minOf(4, words.size)).map { words.take(it).joinToString(" ") }
+            cands.firstOrNull { DateResolver.parse(it, meeting) != null || it.lowercase().endsWith("sitzung") }
+                ?: cands.firstOrNull { DAY_ONLY.matches(it) }
         }.distinct().toList()
         return found.singleOrNull()?.let { DAY_MONTH.replace(it, "$1. $2") }
+            ?.let { if (DAY_ONLY.matches(it) && !it.endsWith(".")) "$it." else it }
     }
 
     // ------------------------------------------------------------ Erledigte Aufgaben
