@@ -11,9 +11,48 @@ import numpy as np
 RATE = 16000
 
 
+def _preload(libdir) -> None:
+    """Mitgelieferte Hilfsbibliotheken von PortAudio vorab laden (Reihenfolge egal, mehrere Durchgänge)."""
+    import ctypes
+    todo = [p for p in libdir.iterdir() if ".so" in p.name and not p.name.startswith("libportaudio")]
+    for _ in range(4):
+        rest = []
+        for p in todo:
+            try:
+                ctypes.CDLL(str(p), mode=ctypes.RTLD_GLOBAL)
+            except OSError:
+                rest.append(p)
+        if not rest or len(rest) == len(todo):
+            break
+        todo = rest
+
+
+def _import_sd():
+    """sounddevice laden. Linux: PortAudio des Systems, sonst die mitgelieferte Bibliothek."""
+    import sys
+    if sys.platform.startswith("linux"):
+        import ctypes.util
+        from .paths import resource
+        bundled = resource("lib/libportaudio.so.2")
+        orig = ctypes.util.find_library
+        if bundled.exists() and not orig("portaudio"):
+            _preload(bundled.parent)
+
+            def find(name):
+                return str(bundled) if name == "portaudio" else orig(name)
+            ctypes.util.find_library = find
+            try:
+                import sounddevice as sd
+            finally:
+                ctypes.util.find_library = orig
+            return sd
+    import sounddevice as sd
+    return sd
+
+
 def devices() -> list[dict]:
     try:
-        import sounddevice as sd
+        sd = _import_sd()
         default_in = sd.default.device[0] if sd.default.device else None
         out = []
         for i, d in enumerate(sd.query_devices()):
@@ -41,7 +80,7 @@ class Recorder:
                 "seconds": self.frames / RATE, "level": round(self.level, 3), "error": self.error}
 
     def start(self, meeting_id: str, path: Path, device: int | None = None) -> None:
-        import sounddevice as sd
+        sd = _import_sd()
         with self.lock:
             if self.active:
                 raise RuntimeError("Es läuft bereits eine Aufnahme.")

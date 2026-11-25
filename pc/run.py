@@ -45,6 +45,43 @@ def _post(info: dict, path: str, body: dict) -> None:
     c.getresponse().read()
 
 
+_APP_BROWSERS = ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable",
+                 "microsoft-edge", "microsoft-edge-stable", "brave-browser", "vivaldi")
+
+
+def open_ui(url: str) -> None:
+    """Linux/macOS: als eigenes Fenster (App-Modus von Chrome/Chromium/Edge), sonst im Standardbrowser."""
+    import shutil
+    import subprocess
+    from pkpc.paths import clean_env
+    if os.environ.get("BROWSER") == "echo":       # automatische Tests: nichts öffnen
+        print(url, flush=True)
+        return
+    if sys.platform == "win32":
+        import webbrowser
+        webbrowser.open(url)
+        return
+    env = clean_env()
+    if os.environ.get("PK_BROWSER") != "1":
+        for b in _APP_BROWSERS:
+            exe = shutil.which(b, path=env.get("PATH"))
+            if exe:
+                try:
+                    subprocess.Popen([exe, f"--app={url}", "--window-size=1280,860"], env=env,
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL, start_new_session=True)
+                    return
+                except OSError:
+                    pass
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    try:
+        subprocess.Popen([opener, url], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        import webbrowser
+        webbrowser.open(url)
+
+
 def cli(args: list[str]) -> int:
     """Wertet eine Datei ohne Fenster aus und schreibt die Ergebnisse in den Ausgabeordner."""
     import time
@@ -114,6 +151,8 @@ def main() -> int:
         for f in files:
             _post(info, "/api/import-path", {"path": str(Path(f).resolve())})
         _post(info, "/api/focus", {})
+        if sys.platform != "win32" and not files:     # Browser-Fenster lässt sich nicht nach vorne holen
+            open_ui(f"http://127.0.0.1:{info['port']}/?t={info['token']}")
         return 0
     from pkpc.server import App, serve
     app = App()
@@ -124,9 +163,9 @@ def main() -> int:
         except Exception:  # noqa: BLE001
             logging.exception("Datei %s", f)
     url = f"http://127.0.0.1:{srv.server_address[1]}/?t={app.token}"
-    if "--browser" in args or os.environ.get("PK_BROWSER") == "1":
-        import webbrowser
-        webbrowser.open(url)
+    if sys.platform != "win32" or "--browser" in args or os.environ.get("PK_BROWSER") == "1":
+        open_ui(url)
+        app.quit_when_idle()          # beendet sich, wenn das Fenster zu ist und nichts mehr läuft
         try:
             import threading
             threading.Event().wait()
@@ -136,8 +175,8 @@ def main() -> int:
     try:
         import webview
     except ImportError:
-        import webbrowser
-        webbrowser.open(url)
+        open_ui(url)
+        app.quit_when_idle()
         import threading
         threading.Event().wait()
         return 0

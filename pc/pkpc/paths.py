@@ -23,11 +23,27 @@ def models_dir() -> Path:
     return p
 
 
+def _xdg_user_dir(name: str) -> Path | None:
+    """Linux: lokalisierte Benutzerordner (z. B. „Dokumente“) über xdg-user-dir bzw. user-dirs.dirs."""
+    if sys.platform.startswith("linux"):
+        cfg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "user-dirs.dirs"
+        try:
+            for line in cfg.read_text("utf-8").splitlines():
+                if line.startswith(f"XDG_{name}_DIR="):
+                    v = line.split("=", 1)[1].strip().strip('"').replace("$HOME", str(Path.home()))
+                    p = Path(v)
+                    if p.exists() and p != Path.home():
+                        return p
+        except OSError:
+            pass
+    return None
+
+
 def documents_dir() -> Path:
     if os.environ.get("PK_OUTPUT_DIR"):
         p = Path(os.environ["PK_OUTPUT_DIR"])
     else:
-        docs = Path.home() / "Documents"
+        docs = _xdg_user_dir("DOCUMENTS") or Path.home() / "Documents"
         if sys.platform == "win32":
             try:
                 import ctypes.wintypes
@@ -64,8 +80,26 @@ def downloads_dir() -> Path | None:
                     return path
         except Exception:
             pass
-    p = Path.home() / "Downloads"
-    return p if p.exists() else None
+    x = _xdg_user_dir("DOWNLOAD")
+    if x:
+        return x
+    for name in ("Downloads", "Download"):
+        p = Path.home() / name
+        if p.exists():
+            return p
+    return None
+
+
+def clean_env() -> dict:
+    """Umgebung für fremde Programme (xdg-open, Browser) ohne die Bibliothekspfade des Pakets."""
+    env = dict(os.environ)
+    for var in ("LD_LIBRARY_PATH", "QT_PLUGIN_PATH", "GDK_PIXBUF_MODULE_FILE"):
+        orig = env.pop(var + "_ORIG", None)
+        if orig is not None:
+            env[var] = orig
+        elif getattr(sys, "frozen", False):
+            env.pop(var, None)
+    return env
 
 
 def resource(rel: str) -> Path:

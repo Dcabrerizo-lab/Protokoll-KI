@@ -16,9 +16,9 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import __version__, catalog, core, package, recorder
+from . import __version__, catalog, core, hardware, package, recorder
 from .model import PROTOCOL_MODES, TEMPLATES, Meeting, meeting_to_json
-from .paths import app_data, documents_dir, downloads_dir, resource
+from .paths import app_data, clean_env, documents_dir, downloads_dir, resource
 
 log = logging.getLogger("pkpc")
 
@@ -36,7 +36,23 @@ class App:
         self.token = secrets.token_urlsafe(16)
         self.focus_requested = 0.0
         self._ids: dict[tuple[str, float], str | None] = {}
+        self.last_seen = time.time()
         threading.Thread(target=self._watch_downloads, daemon=True).start()
+        hardware.warm_up()
+
+    def busy(self) -> bool:
+        """Läuft gerade etwas, das nicht abgebrochen werden darf?"""
+        return bool(self.rec.active or self.proc.queued or self.dl.snapshot().get("running"))
+
+    def quit_when_idle(self, idle_sec: float = 300) -> None:
+        """Im Browser-Betrieb (Linux): beenden, wenn kein Fenster mehr offen ist und nichts mehr läuft."""
+        def loop():
+            while True:
+                time.sleep(15)
+                if time.time() - self.last_seen > idle_sec and not self.busy():
+                    logging.info("Kein Fenster mehr offen, Programm beendet sich.")
+                    os._exit(0)
+        threading.Thread(target=loop, daemon=True).start()
 
     # ------------------------------------------------------------ Download-Ordner beobachten
 
@@ -97,6 +113,8 @@ class App:
             "models": {
                 "ready": active is not None, "active": active.id if active else None,
                 "recommended": rec_set.id, "ramGb": round(catalog.total_ram_gb(), 1),
+                "hardware": hardware.summary_text(hardware.info()),
+                "onGpu": hardware.gpu_fits(hardware.info(), (active or rec_set).llm.size, (active or rec_set).context),
                 "sets": [{"id": x.id, "label": x.label, "description": x.description,
                           "bytes": x.download_bytes, "installed": catalog.is_installed(x)}
                          for x in catalog.SETS if x.id != "kompakt" or os.environ.get("PK_MODEL_SET") == "kompakt"],
@@ -110,6 +128,7 @@ class App:
             "outputDir": str(self.docs),
             "downloadsDir": str(downloads_dir() or ""),
             "focus": self.focus_requested,
+            "platform": sys.platform,
         }
 
     def meeting_full(self, mid: str) -> dict | None:
@@ -232,7 +251,7 @@ def _open_file(p: Path) -> None:
     elif sys.platform == "darwin":
         subprocess.Popen(["open", str(p)])
     else:
-        subprocess.Popen(["xdg-open", str(p)])
+        subprocess.Popen(["xdg-open", str(p)], env=clean_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _reveal(p: Path, select: bool = False) -> None:
@@ -296,6 +315,7 @@ def make_handler(app: App):
             if not self._authorized():
                 return self._json({"error": "forbidden"}, 403)
             if p == "/api/state":
+                app.last_seen = time.time()
                 return self._json(app.state())
             m = re.fullmatch(r"/api/meeting/([\w-]+)", p)
             if m:
@@ -360,6 +380,12 @@ def make_handler(app: App):
                             w.show()
                         except Exception:  # noqa: BLE001
                             pass
+                    return self._json({})
+                if p == "/api/quit":
+                    if app.rec.active:
+                        app.stop_recording()
+                    app.proc.cancel()
+                    threading.Timer(0.5, lambda: os._exit(0)).start()
                     return self._json({})
                 if p == "/api/cancel":
                     app.proc.cancel()
