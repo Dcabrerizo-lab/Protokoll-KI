@@ -78,8 +78,7 @@ object MeetingRepository {
     fun get(id: String): Meeting? = _meetings.value.firstOrNull { it.id == id }
 
     const val INTERRUPTED_MESSAGE =
-        "Die Verarbeitung wurde unterbrochen, weil die App beendet wurde (z. B. vom System bei " +
-            "wenig Arbeitsspeicher). Bitte „Erneut versuchen“ tippen."
+        "Die Verarbeitung wurde unterbrochen, weil die App beendet wurde."
 
     /**
      * Speichert atomar (erst Hilfsdatei, dann umbenennen): wird die App beim Schreiben beendet,
