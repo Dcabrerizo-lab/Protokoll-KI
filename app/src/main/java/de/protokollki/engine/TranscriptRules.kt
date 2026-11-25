@@ -221,6 +221,8 @@ object TranscriptRules {
      * "Danke, Herr Schröder." -> wer direkt davor sprach, ist Herr Schröder.
      * Nur eindeutige Zuordnungen (kein Widerspruch, niemand spricht sich selbst an).
      */
+    private val SUMMARY_ALSO = rx("^\\s+(?:ist|übernimmt|macht|kümmert sich um)\\s+also\\b")
+
     fun speakerNames(segments: List<Segment>): Map<Int, String> {
         val votes = mutableMapOf<Int, MutableMap<String, Int>>()
         val notMe = mutableMapOf<Int, MutableSet<String>>()
@@ -232,6 +234,13 @@ object TranscriptRules {
                 val after = seg.text.substring(m.range.last + 1)
                 val vocative = after.isEmpty() || after[0] in ",?!" || (after[0] == '.' && THANKS.containsMatchIn(before)) ||
                     BARE_VOCATIVE.containsMatchIn(after)
+                // Zusammenfassung der Zusage davor: "Herr Wagner ist also Praxisanleiter" -> wer zuvor zugesagt hat
+                if (!vocative && SUMMARY_ALSO.containsMatchIn(after)) {
+                    val prev = segments.getOrNull(i - 1)
+                    if (prev != null && prev.speakerId != seg.speakerId && (SELF_COMMIT.containsMatchIn(prev.text) || ANAPHORIC.containsMatchIn(prev.text)))
+                        votes.getOrPut(prev.speakerId) { mutableMapOf() }.merge(name, 1, Int::plus)
+                    continue
+                }
                 if (!vocative) continue
                 val target = when {
                     THANKS.containsMatchIn(before) -> segments.getOrNull(i - 1)
@@ -618,6 +627,7 @@ object TranscriptRules {
     private val NOT_DONE = rx("\\b(noch offen|nicht erledigt|noch nicht|warte(n)? noch|steht noch aus|fehlt noch|bleibt offen)\\b",
         true)
 
+    private val STATE_DONE = rx("\\b(?:ist|sind)\\s+(?:schon\\s+|bereits\\s+)?(?:unterschrieben|abgeschlossen|erledigt|bestellt|verschickt|eingereicht|ge\\p{L}{2,}(?:t|en))\\s*(?:[.!;]|$)", true)
     private val REPORTED = rx("\\b(?:habe|haben)\\s+(?:ich|wir)\\b(?!.*\\b(?:bis|noch nicht|nicht)\\b).*\\b(?:ge\\p{L}{2,}t|\\p{L}{3,}iert|abgeschlossen|erledigt)\\s*[.!]?$", true)
 
     /**
@@ -626,9 +636,14 @@ object TranscriptRules {
      */
     fun reportedDone(taskText: String, text: String): Boolean {
         val sentence = sentenceFor(taskText, text)
-        return REPORTED.containsMatchIn(sentence) && !SELF_COMMIT.containsMatchIn(sentence) &&
+        return (REPORTED.containsMatchIn(sentence) || STATE_DONE.containsMatchIn(sentence)) && !SELF_COMMIT.containsMatchIn(sentence) &&
             !REQUEST.containsMatchIn(sentence) && !PLEASE_DO.containsMatchIn(sentence)
     }
+
+    private val PROCEDURAL = rx("^(?:\\p{L}+\\s+){0,3}?(?:eröffne\\p{L}*|begrüße\\p{L}*|schließe\\p{L}*|beende\\p{L}*)\\s+(?:\\p{L}+\\s+){0,3}(?:sitzung|besprechung|elternabend|versammlung|treffen|runde|teambesprechung|qualitätszirkel|abend)\\b", true)
+
+    /** Ablauf der Sitzung selbst ("Den Elternabend eröffnen") ist keine Aufgabe. */
+    fun procedural(taskText: String): Boolean = PROCEDURAL.containsMatchIn(taskText.trim())
 
     /** Gemeinsame längere Hauptwörter ("Wäschewagen") */
     fun sharedNouns(a: String, b: String): Set<String> = longNouns(a) intersect longNouns(b)

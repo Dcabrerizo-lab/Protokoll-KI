@@ -299,4 +299,19 @@ class TranscriptRulesTest {
         assertEquals("Frau Albers", TranscriptRules.assignee("Frau Albers übernimmt die Elternbriefe."))
         assertEquals(setOf("wäschewagen"), TranscriptRules.sharedNouns("Wäschewagen organisieren", "Zwei Angebote für Wäschewagen einholen"))
     }
+
+    @Test
+    fun summaryWithAlsoNamesPreviousVolunteer() {
+        val s = segs(2 to "Wer übernimmt die Praxisanleitung?", 3 to "Das kann ich machen, ich habe die Weiterbildung.",
+            0 to "Sehr gut. Herr Wagner ist also Praxisanleiter für Herrn Okafor.")
+        assertEquals(mapOf(3 to "Herr Wagner"), TranscriptRules.speakerNames(s))
+    }
+
+    @Test
+    fun procedureAndFinishedStateAreNoTasks() {
+        assertTrue(TranscriptRules.procedural("Eröffne den Elternabend der Klasse vier b."))
+        assertTrue(TranscriptRules.procedural("Dann schließe ich die Besprechung"))
+        assertEquals(false, TranscriptRules.procedural("Raum für die nächste Sitzung buchen"))
+        assertTrue(TranscriptRules.reportedDone("Mietvertrag erledigen", "Der Mietvertrag für das neue Büro ist unterschrieben. Einzug ist am ersten Februar."))
+    }
 }

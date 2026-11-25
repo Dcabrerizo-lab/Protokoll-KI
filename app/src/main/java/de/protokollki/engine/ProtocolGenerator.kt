@@ -157,10 +157,12 @@ class ProtocolGenerator(private val model: TextModel) {
             .map { it.copy(owner = resolveOwner(it.owner, it.ref, segments, ::nameOf, it.text, known, mentioned)) }
         // Einzelne Wörter ("Verschiedenes") sind keine Aufgaben
         var tasks = refine(raws.flatMap { r -> runCatching { parseTasks(r, n) }.getOrDefault(emptyList()) }
-            .filter { it.text.trim().contains(' ') })
+            .filter { it.text.trim().contains(' ') && !TranscriptRules.procedural(it.text) })
             // Beleg berichtet nur Erledigtes ("habe ich organisiert") und enthält keine Zusage: keine Aufgabe
             .filterNot { t -> t.ref in segments.indices && commitments.none { it.ref == t.ref } &&
                 TranscriptRules.reportedDone(t.text, segments[t.ref].text) }
+            // Abschrift einer bekannten offenen Aufgabe ohne Beleg im Gespräch: wird schon als offen geführt
+            .filterNot { t -> t.ref !in segments.indices && openTasks.any { (words(it.text) intersect words(t.text)).size >= 2 } }
 
         // Aufgaben-Nachfassen ohne zusätzliche Modellrunde: Zusagen und Aufträge im Transkript, die keine
         // Aufgabe abdeckt (kleine Modelle übersehen sie oft), werden regelbasiert als Aufgabe formuliert.
@@ -195,8 +197,12 @@ class ProtocolGenerator(private val model: TextModel) {
         val finalTasks = dedupe(tasks).let { all ->
             // Gleiche Person, gleicher Gegenstand: die Aufgabe mit Zusage im Beleg ersetzt die ohne
             fun committed(t: TaskItem) = commitments.any { it.ref == t.ref }
+            fun grounded(t: TaskItem) = segments.getOrNull(t.ref)?.let { (contentWords(t.text) intersect contentWords(it.text)).size } ?: 0
             all.filterNot { t -> !GENERIC.matches(t.owner) && !committed(t) && all.any { u -> u !== t &&
                 u.owner.equals(t.owner, true) && committed(u) && TranscriptRules.sharedNouns(t.text, u.text).isNotEmpty() } }
+                // Gleicher Beleg, gleiche Person: die Formulierung, die zum Beleg passt, gewinnt
+                .let { kept -> kept.filterNot { t -> grounded(t) < 2 && kept.any { u -> u !== t && u.ref == t.ref &&
+                    u.owner.equals(t.owner, true) && grounded(u) >= 2 } } }
         }
         // Team = Sprechende, Eingeladene und ausdrücklich Beauftragte. Verantwortliche aus der Modellausgabe zählen
         // nicht automatisch dazu: kleine Modelle tragen dort auch Klientinnen und Klienten ein.
@@ -470,7 +476,7 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
             // Ausdrücklich jemand anderem zugewiesen ("Frau Albers übernimmt …"): eigene Aufgabe
             if (t.ref != c.ref && TranscriptRules.assignee(c.sentence)?.substringAfterLast(' ')?.lowercase()
                     ?.let { it !in t.owner.lowercase() } == true) return false
-            val shared = words(t.text).count { sentence.contains(it) }
+            val shared = contentWords(t.text).count { sentence.contains(it) }
             return shared >= 2 || (shared >= 1 && t.ref in (c.ref - 1)..(c.ref + 1))
         }
 
@@ -524,6 +530,8 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
                 else part.take(keep).let { t -> t.substring(0, t.lastIndexOf('\n').takeIf { it > keep / 2 } ?: t.length) }
             }
 
+        /** Wörter ohne Personennamen ("Frau Becker" verbindet keine Aufgabe mit einer Zusage) */
+        private fun contentWords(t: String) = words(ADDRESS.replace(t, " "))
         private val WORD = Regex("[\\p{L}\\d]{4,}")
         private val STOP = setOf("bitte", "sich", "sind", "wird", "werden", "noch", "dann", "auch", "eine",
             "einen", "einer", "dass", "diese", "dieser", "nicht", "habe", "haben", "kann", "können", "sollen")
