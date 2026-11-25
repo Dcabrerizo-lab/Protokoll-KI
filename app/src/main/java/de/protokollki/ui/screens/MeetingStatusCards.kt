@@ -177,6 +177,11 @@ private fun ReadyCard(
                 }
             }
             Spacer(Modifier.height(16.dp))
+            // Akku-Hinweis oben, damit er auch auf kleinen Bildschirmen ohne Scrollen sichtbar ist
+            if (powerWarning != null) {
+                PowerWarning(powerWarning)
+                Spacer(Modifier.height(12.dp))
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Groups, contentDescription = null, modifier = Modifier.size(16.dp), tint = cs.onSurfaceVariant)
                 Spacer(Modifier.width(6.dp))
@@ -195,11 +200,7 @@ private fun ReadyCard(
                 singleLine = false,
                 maxLines = 3,
             )
-            Spacer(Modifier.height(12.dp))
-            if (powerWarning != null) {
-                PowerWarning(powerWarning)
-                Spacer(Modifier.height(12.dp))
-            }
+            Spacer(Modifier.height(16.dp))
             if (modelsInstalled) {
                 Button(
                     onClick = start,
