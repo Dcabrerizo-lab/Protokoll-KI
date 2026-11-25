@@ -64,8 +64,11 @@ retry_ui() {
 # Öffnet die Besprechung mit Titel $1 (nach Neustart steht die App evtl. schon darin)
 open_meeting() {
   ui_has "Erneut versuchen" && return 0
-  tap_text "$1" || { adb shell input keyevent KEYCODE_BACK; sleep 2; tap_text "$1"; }
+  tap_text "$1" || { adb shell input keyevent KEYCODE_BACK; sleep 2; tap_text "$1"; } || \
+    { start_app; sleep 3; tap_text "$1"; } || info "Besprechung „$1“ nicht gefunden, Oberfläche: $(ui_texts)"
   sleep 3
+  # Einführung darf nach Neustart nie erscheinen, wenn sie erledigt ist und die Modelle da sind
+  if ui_has "Los geht"; then fail "[Neustart] App zeigt wieder die Einführung"; fi
 }
 
 # ================================================================ A  Aufnahme

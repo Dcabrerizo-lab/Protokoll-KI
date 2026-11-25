@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +42,7 @@ import androidx.core.content.ContextCompat
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import de.protokollki.audio.importAudio
@@ -114,6 +116,21 @@ fun AppNavigation(
             Routes.ONBOARDING
         } else {
             Routes.HOME
+        }
+    }
+
+    // Einführung nie unter der Startseite liegen lassen: Ist sie erledigt und sind die Modelle da
+    // (z. B. nach einem Test-Start per Intent oder nach Prozessende mit wiederhergestelltem Verlauf),
+    // führt „Zurück“ bzw. der Neustart sonst wieder auf die Einführung statt zur Startseite.
+    val onboardingDone = AppSettings.state.collectAsState().value.onboardingDone
+    val modelsInstalled = ModelManager.state.collectAsState().value.installed
+    val currentRoute = nav.currentBackStackEntryAsState().value?.destination?.route
+    LaunchedEffect(currentRoute, onboardingDone, modelsInstalled) {
+        if (currentRoute == Routes.ONBOARDING && onboardingDone && modelsInstalled) {
+            nav.navigate(Routes.HOME) {
+                popUpTo(nav.graph.id) { inclusive = true }
+                launchSingleTop = true
+            }
         }
     }
 
