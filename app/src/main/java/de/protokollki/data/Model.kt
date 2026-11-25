@@ -113,6 +113,7 @@ data class Meeting(
     val tasks: List<TaskItem> = emptyList(),
     val error: String? = null,
     val agenda: List<String> = emptyList(),         // Tagesordnung (vorab eingegeben)
+    val participants: List<String> = emptyList(),   // Namen der Teilnehmenden (vorab, optional)
     val followUps: List<FollowUp> = emptyList(),    // Stand offener Aufgaben aus früheren Sitzungen
     val sensitiveTerms: List<String> = emptyList(), // zu schwärzende Begriffe (Klientennamen usw.)
     val audioDeleted: Boolean = false,              // Audio per Löschfrist entfernt
@@ -145,6 +146,7 @@ fun Meeting.toJson(): JSONObject = JSONObject().apply {
     put("expectedSpeakers", expectedSpeakers)
     put("error", error)
     put("agenda", agenda.toJson())
+    put("participants", participants.toJson())
     put("sensitiveTerms", sensitiveTerms.toJson())
     put("audioDeleted", audioDeleted)
     put("template", template.name)
@@ -239,6 +241,7 @@ fun meetingFromJson(o: JSONObject): Meeting {
                 doneNote = if (t.isNull("doneNote")) null else t.optString("doneNote"))
         },
         agenda = o.optJSONArray("agenda").strings(),
+        participants = o.optJSONArray("participants").strings(),
         sensitiveTerms = o.optJSONArray("sensitiveTerms").strings(),
         audioDeleted = o.optBoolean("audioDeleted", false),
         template = ProtocolTemplate.of(o.optString("template", "")),

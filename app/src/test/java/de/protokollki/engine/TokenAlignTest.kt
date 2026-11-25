@@ -79,4 +79,30 @@ class TokenAlignTest {
         // überlappende/unsortierte Abschnitte: kein Schnellweg (Ergebnis wie bisher)
         assertEquals(null, TokenAlign.SortedTurns.of(listOf(Transcriber.Turn(0f, 5f, 0), Transcriber.Turn(3f, 6f, 1))))
     }
+
+    @Test
+    fun refinementMovesSentenceToSpeakerWithMatchingVoice() {
+        // Drei Sätze; die Sprechererkennung schlägt den zweiten (Stimme A) fälschlich Sprecher 1 zu
+        val w = listOf(
+            TokenAlign.Word("Ich", 0f, 0.5f), TokenAlign.Word("beginne.", 0.5f, 1.5f),
+            TokenAlign.Word("Und", 2f, 2.5f), TokenAlign.Word("weiter.", 2.5f, 3.5f),
+            TokenAlign.Word("Gut", 4f, 4.5f), TokenAlign.Word("so.", 4.5f, 5.5f),
+            TokenAlign.Word("Danke", 6f, 6.5f), TokenAlign.Word("auch.", 6.5f, 7.5f),
+        )
+        val turns = listOf(Transcriber.Turn(0f, 1.8f, 0), Transcriber.Turn(1.9f, 7.6f, 1))
+        val voiceA = floatArrayOf(1f, 0f); val voiceB = floatArrayOf(0f, 1f)
+        val spk = TokenAlign.refineSpeakers(w, turns, embed = { a, _ ->
+            if (a < 3f) voiceA else voiceB
+        })
+        assertEquals(listOf(0, 0, 0, 0, 1, 1, 1, 1), spk.toList())
+        val s = TokenAlign.segments(w, turns, renumber = false, speakers = spk)
+        assertEquals(listOf("Ich beginne. Und weiter.", "Gut so. Danke auch."), s.map { it.text })
+    }
+
+    @Test
+    fun refinementKeepsSingleSpeakerUntouched() {
+        val w = listOf(TokenAlign.Word("Hallo.", 0f, 1.5f))
+        val spk = TokenAlign.refineSpeakers(w, listOf(Transcriber.Turn(0f, 2f, 3)), embed = { _, _ -> floatArrayOf(1f) })
+        assertEquals(listOf(3), spk.toList())
+    }
 }

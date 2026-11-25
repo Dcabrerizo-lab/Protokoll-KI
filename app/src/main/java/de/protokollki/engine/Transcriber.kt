@@ -86,7 +86,8 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
         var stopped = false
         // Je Abschnitt frei clustern; die vorgegebene Teilnehmerzahl gilt für die ganze Aufnahme
         val sd = OfflineSpeakerDiarization(config = diarizationConfig(0))
-        val embedder = SpeakerEmbedder(threads)
+        // Abschnitte verbinden mit dem Stimmprofil-Modell (resnet34), auf das SpeakerLinker abgestimmt ist
+        val embedder = SpeakerEmbedder(threads, ModelCatalog.VOICE_EMBEDDING)
         try {
             for ((i, b) in bounds.withIndex()) {
                 val (turns, emb) = diarizeWindow(sd, embedder, audio, b.first, b.second, gain) { f ->
@@ -157,8 +158,8 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
         ),
         clustering = FastClusteringConfig(
             numClusters = if (numSpeakers > 0) numSpeakers else -1,
-            // an deutschen Testaufnahmen abgestimmt (0,5 fasst ähnliche Stimmen zusammen)
-            threshold = 0.35f,
+            // an 18 deutschen Testszenarien abgestimmt (siehe scripts/bench)
+            threshold = ModelCatalog.CLUSTER_THRESHOLD,
         ),
         minDurationOn = 0.3f,
         minDurationOff = 0.5f,
@@ -335,6 +336,7 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
         val recognizer = OfflineRecognizer(config = config)
         val words = mutableListOf<TokenAlign.Word>()
         var segments: List<Segment> = emptyList()
+        var stopped = false
         try {
             for ((i, w) in windows.withIndex()) {
                 val a = (w.first * sampleRate).toInt().coerceIn(0, samples.size)
@@ -353,10 +355,27 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
                 segments = TokenAlign.segments(words, chunks, renumber = false)
                     .map { it.copy(text = TextCleanup.clean(it.text)) }
                     .filter { it.text.isNotEmpty() }
-                if (!onProgress(i + 1, windows.size, segments)) break
+                if (!onProgress(i + 1, windows.size, segments)) { stopped = true; break }
             }
         } finally {
             recognizer.release()
+        }
+        // Nachclustering: jeder Satz zum ähnlichsten Sprecher (behebt Verwechslung ähnlicher Stimmen)
+        if (!stopped && words.isNotEmpty() && chunks.map { it.speaker }.distinct().size >= 2) {
+            runCatching {
+                // Audio je Satz aus der (ggf. eingeblendeten) Aufnahme holen, nie die ganze Aufnahme
+                SpeakerEmbedder(threads, ModelCatalog.EMBEDDING).use { embedder ->
+                    val spk = TokenAlign.refineSpeakers(words, chunks, embed = { from, to ->
+                        val a = (from * sampleRate).toInt().coerceIn(0, samples.size)
+                        val b = (to * sampleRate).toInt().coerceIn(a, samples.size)
+                        if (b - a < sampleRate) null
+                        else embedder.embed(AudioLevel.applyGain(samples.floats(a, b), gain))
+                    })
+                    segments = TokenAlign.segments(words, chunks, renumber = false, speakers = spk)
+                        .map { it.copy(text = TextCleanup.clean(it.text)) }
+                        .filter { it.text.isNotEmpty() }
+                }
+            }.onFailure { android.util.Log.w("ProtokollKI", "Nachclustering übersprungen: $it") }
         }
         return segments
     }

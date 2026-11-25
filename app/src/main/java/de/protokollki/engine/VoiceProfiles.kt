@@ -266,10 +266,13 @@ object VoiceMath {
 }
 
 /** Stimm-Vektor (WeSpeaker) aus Audio. Immer mit [close] freigeben. */
-class SpeakerEmbedder(threads: Int = 2) : AutoCloseable {
+class SpeakerEmbedder(
+    threads: Int = 2,
+    modelFile: String = ModelCatalog.VOICE_EMBEDDING,
+) : AutoCloseable {
     private val extractor = SpeakerEmbeddingExtractor(
         config = SpeakerEmbeddingExtractorConfig(
-            model = ModelManager.file(ModelCatalog.EMBEDDING).absolutePath,
+            model = ModelManager.file(modelFile).absolutePath,
             numThreads = threads,
         )
     )

@@ -33,6 +33,7 @@ jobs:
           rm -rf $PK
           $C $GH/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2 | tar xj
           cp sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx ../out/pyannote-segmentation-3-0.int8.onnx
+          cp sherpa-onnx-pyannote-segmentation-3-0/model.onnx ../out/pyannote-segmentation-3-0.onnx
           cd ../out && ls -l && sha256sum * > SHA256SUMS
       - name: Release models-v1 anlegen oder ergänzen
         env:

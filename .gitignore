@@ -17,3 +17,6 @@ pc/dist/
 pc/dl/
 __pycache__/
 *.pyc
+
+# Stress-Szenarien und Benchmark: Audio wird erzeugt, nicht eingecheckt
+scripts/e2e/scenarios/out/stress_*
