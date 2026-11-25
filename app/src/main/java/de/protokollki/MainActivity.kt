@@ -127,14 +127,25 @@ class MainActivity : ComponentActivity() {
         if (intent == null) return
         // Nur in Test-Builds (debuggable): automatischer Ende-zu-Ende-Test im Emulator
         val debuggable = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        // Härtetest im Emulator (scripts/e2e/stress.sh): Aufnahme per adb starten/beenden
+        if (debuggable && intent.action == "de.protokollki.DEBUG_RECORD") {
+            de.protokollki.data.AppSettings.update {
+                it.copy(onboardingDone = true, autoProcess = intent.getBooleanExtra("auto_process", false))
+            }
+            when (intent.getStringExtra("cmd")) {
+                "start" -> de.protokollki.audio.Recorder.start(this)
+                "stop" -> de.protokollki.audio.Recorder.stop(this)
+            }
+            return
+        }
         if (debuggable && intent.action == "de.protokollki.DEBUG_IMPORT") {
             intent.getStringExtra("model_set")?.let { de.protokollki.engine.ModelManager.selectSet(it) }
             val template = de.protokollki.data.ProtocolTemplate.of(intent.getStringExtra("template"))
             de.protokollki.data.AppSettings.update {
                 val vocab = intent.getStringExtra("vocabulary")
                     ?.split("|")?.map { v -> v.trim() }?.filter { v -> v.isNotEmpty() }
-                it.copy(onboardingDone = true, autoProcess = true, defaultTemplate = template,
-                    vocabulary = vocab ?: it.vocabulary)
+                it.copy(onboardingDone = true, autoProcess = intent.getBooleanExtra("auto_process", true),
+                    defaultTemplate = template, vocabulary = vocab ?: it.vocabulary)
             }
             DebugHooks.pendingAgenda = intent.getStringExtra("agenda")
                 ?.split("|")?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() }

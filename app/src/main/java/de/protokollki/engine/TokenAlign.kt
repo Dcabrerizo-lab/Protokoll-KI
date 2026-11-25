@@ -64,8 +64,11 @@ object TokenAlign {
             out += Segment(id, cur.first().start, cur.last().end, join(cur))
             cur = mutableListOf()
         }
+        // Lange Aufnahmen (2–3 h): Tausende Abschnitte – bei sortierten Abschnitten binär suchen
+        val lookup = SortedTurns.of(turns)
         for (w in words) {
-            val spk = speakerAt((w.start + w.end) / 2, turns)
+            val mid = (w.start + w.end) / 2
+            val spk = lookup?.speakerAt(mid) ?: speakerAt(mid, turns)
             val last = cur.lastOrNull()
             val sentenceEnd = last != null && last.text.last() in ".?!"
             if (last != null && (spk != curSpk || (w.start - last.end > maxGap && sentenceEnd))) flush()
@@ -74,6 +77,45 @@ object TokenAlign {
         }
         flush()
         return mergeTiny(out)
+    }
+
+    /**
+     * Schnelle Variante von [speakerAt] für nach Beginn sortierte, nicht überlappende Abschnitte
+     * (so liefert sie [Transcriber.planChunks]); gleiches Ergebnis in O(log n).
+     */
+    internal class SortedTurns private constructor(private val turns: List<Transcriber.Turn>) {
+        fun speakerAt(t: Float): Int {
+            // letzter Abschnitt mit start <= t
+            var lo = 0
+            var hi = turns.size - 1
+            var idx = -1
+            while (lo <= hi) {
+                val m = (lo + hi) ushr 1
+                if (turns[m].start <= t) { idx = m; lo = m + 1 } else hi = m - 1
+            }
+            // Enthaltender Abschnitt (bei t genau auf einer Grenze gewinnt wie bei speakerAt der frühere)
+            if (idx > 0 && t <= turns[idx - 1].end) return turns[idx - 1].speaker
+            if (idx >= 0 && t <= turns[idx].end) return turns[idx].speaker
+            // sonst der nächstgelegene Nachbar (bei Gleichstand der frühere)
+            var best = -1
+            var bestDist = Float.MAX_VALUE
+            for (c in intArrayOf(idx, idx + 1)) {
+                if (c < 0 || c >= turns.size) continue
+                val d = minOf(abs(t - turns[c].start), abs(t - turns[c].end))
+                if (d < bestDist) { bestDist = d; best = c }
+            }
+            return turns[best].speaker
+        }
+
+        companion object {
+            fun of(turns: List<Transcriber.Turn>): SortedTurns? {
+                if (turns.size < 2) return null
+                for (i in 1 until turns.size) {
+                    if (turns[i].start < turns[i - 1].end || turns[i].start < turns[i - 1].start) return null
+                }
+                return SortedTurns(turns)
+            }
+        }
     }
 
     /** Einzelne Wörter, die die Sprechererkennung einem anderen Sprecher zuschlägt, dem Umfeld zuordnen. */
@@ -98,8 +140,10 @@ object TokenAlign {
         return out
     }
 
+    private val spaceBeforePunct = Regex(" ([.,!?;:])")
+
     private fun join(ws: List<Word>) = ws.joinToString(" ") { it.text }
-        .replace(Regex(" ([.,!?;:])"), "$1").trim()
+        .replace(spaceBeforePunct, "$1").trim()
 
     /**
      * Teilt die Aufnahme in Fenster von höchstens [maxLen] s, geschnitten an leisen Stellen

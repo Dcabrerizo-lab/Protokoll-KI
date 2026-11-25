@@ -52,6 +52,31 @@ if g("geraet"):
     lines.append(f"- Modellpaket: **{g('paket')}** (App-Empfehlung für dieses Handy: {g('empfohlen')})")
 if g("download.sekunden"):
     lines.append(f"- Download: {g('download')} in {int(g('download.sekunden')) // 60} min")
+def power(key):
+    """Akku vorher→nachher, Akkutemperatur max., Thermal-Status max. (falls gemessen)."""
+    parts = []
+    a, b = g(key + ".akku_vorher"), g(key + ".akku_nachher")
+    if a not in (None, "", "?") and b not in (None, "", "?"):
+        try:
+            diff = int(a) - int(b)
+            parts.append(f"Akku {a} % → {b} % ({'-' if diff > 0 else '±' if diff == 0 else '+'}{abs(diff)} %)")
+        except ValueError:
+            parts.append(f"Akku {a} % → {b} %")
+    if g(key + ".laedt") == "true":
+        parts.append("am Ladegerät")
+    t = g(key + ".akku_temp_max")
+    if t not in (None, "", "?"):
+        warm = ""
+        try:
+            warm = " 🔥" if float(t) >= 42 else ""
+        except ValueError:
+            pass
+        parts.append(f"Akku max. {t} °C{warm}")
+    th = g(key + ".thermal_max")
+    if th not in (None, "", "?"):
+        parts.append(f"Wärmestufe max. {th}" + (" ⚠️" if th[:1].isdigit() and int(th[:1]) >= 3 else ""))
+    return (" · " + ", ".join(parts)) if parts else ""
+
 for key, label in (("kurz", "Besprechung 69 s"), ("lang", "Lange Besprechung 4,7 min")):
     if g(f"{key}.sekunden"):
         lines.append(
@@ -60,6 +85,7 @@ for key, label in (("kurz", "Besprechung 69 s"), ("lang", "Lange Besprechung 4,7
             f"App-Speicher max. {g(key + '.max_app_speicher_mb')} MB, "
             f"freier RAM min. {g(key + '.min_frei_ram_mb')} MB"
             + (" · ⚠️ Speicher knapp" if g(key + ".speicher_knapp") == "true" else "")
+            + power(key)
             + (f" · Fehlermeldung: {g(key + '.fehler')}" if g(key + ".fehler") not in (None, "", "null") else ""))
 # Zeitmessung je Schritt (App) und je Sprachmodell-Aufruf (nativ), in Reihenfolge des Protokolls
 timing = [m.group(1) + ": " + m.group(2).strip()

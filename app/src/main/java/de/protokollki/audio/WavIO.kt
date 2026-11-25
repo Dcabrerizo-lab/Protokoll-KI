@@ -70,16 +70,33 @@ class WavWriter(private val file: File) : Closeable {
         bytesSinceFlush = 0
     }
 
+    /**
+     * Schließt die Datei und trägt die Größen im Header ein – auch wenn das letzte Schreiben
+     * fehlschlug (z. B. Speicher voll): dann zählt, was tatsächlich auf der Platte steht.
+     * Ein Schreibfehler wird danach weitergereicht.
+     */
     @Synchronized
     override fun close() {
         if (closed) return
+        var error: IOException? = null
         try {
             out.flush()
+        } catch (e: IOException) {
+            error = e
         } finally {
             closed = true
-            out.close()
+            try {
+                out.close()
+            } catch (e: IOException) {
+                if (error == null) error = e
+            }
         }
-        patchSizes()
+        if (error != null) {
+            val onDisk = ((file.length() - 44L).coerceAtLeast(0L)) and 1L.inv()
+            dataBytes = minOf(dataBytes, onDisk)
+        }
+        runCatching { patchSizes() }.exceptionOrNull()?.let { if (error == null) error = it as? IOException ?: IOException(it) }
+        error?.let { throw it }
     }
 
     private fun patchSizes() {
@@ -117,30 +134,77 @@ object WavIO {
      * Liest eine WAV-Datei vollständig als 16 kHz mono Float (-1..1). Unterstützt PCM 8/16/24/32 bit
      * und Float32, beliebig viele Kanäle (Downmix) und beliebige Abtastraten (lineare Interpolation).
      *
-     * Speicherbedarf: 4 Byte pro Ausgabesample, d. h. ~230 MB je Stunde (2 h ≈ 460 MB, nur mit
-     * largeHeap tragbar). Gelesen wird blockweise (64 KB), es entsteht kein zweites Vollpuffer-Array.
+     * Speicherbedarf: 4 Byte pro Ausgabesample, d. h. ~230 MB je Stunde. Für die Verarbeitung langer
+     * Aufnahmen daher [MappedPcm16Audio] verwenden (liest abschnittsweise direkt aus der Datei).
      */
     fun readMono16k(path: String): FloatArray {
         val file = File(path)
+        val info = checkedInfo(file)
+        val outCount = LinearResampler.outputCount(info.frames, info.sampleRate, SAMPLE_RATE)
+        if (outCount > Int.MAX_VALUE - 16) throw IOException("Audiodatei ist zu lang")
+        val result = FloatArray(outCount.toInt())
+        var outPos = 0
+        decode(file, info) { buf, n ->
+            val copy = minOf(n, result.size - outPos)
+            if (copy > 0) {
+                System.arraycopy(buf, 0, result, outPos, copy)
+                outPos += copy
+            }
+        }
+        // Bei vorzeitigem Dateiende bleibt der Rest still (0f) – Länge stimmt mit durationSec überein.
+        return result
+    }
+
+    /** true, wenn die Datei bereits 16 kHz / mono / PCM16 ist (direkt lesbar ohne Umrechnung). */
+    fun isPcm16Mono16k(path: String): Boolean = try {
+        val i = readInfo(File(path))
+        i.format == FORMAT_PCM && i.channels == 1 && i.sampleRate == SAMPLE_RATE && i.bitsPerSample == 16
+    } catch (e: Exception) {
+        false
+    }
+
+    /**
+     * Rechnet eine beliebige (unterstützte) WAV-Datei blockweise in 16 kHz / mono / PCM16 um,
+     * ohne sie ganz in den Speicher zu laden. Gibt die Anzahl geschriebener Samples zurück.
+     */
+    fun convertToPcm16Mono16k(src: File, dst: File): Long {
+        val info = checkedInfo(src)
+        val pcm = ShortArray(4096)
+        return WavWriter(dst).use { w ->
+            decode(src, info) { buf, n ->
+                var i = 0
+                while (i < n) {
+                    val k = minOf(pcm.size, n - i)
+                    for (j in 0 until k) pcm[j] = floatToPcm16(buf[i + j])
+                    w.write(pcm, k)
+                    i += k
+                }
+            }
+            w.samplesWritten
+        }
+    }
+
+    internal fun checkedInfo(file: File): Info {
         val info = readInfo(file)
         if (info.sampleRate <= 0 || info.channels <= 0) throw IOException("Ungültiger WAV-Header")
         val bytesPerSample = (info.bitsPerSample + 7) / 8
-        val isFloat = info.format == FORMAT_FLOAT
-        if (isFloat && info.bitsPerSample != 32) throw IOException("Nicht unterstütztes WAV-Format")
+        if (info.format == FORMAT_FLOAT && info.bitsPerSample != 32) throw IOException("Nicht unterstütztes WAV-Format")
         if (bytesPerSample !in 1..4) throw IOException("Nicht unterstütztes WAV-Format")
-        val frames = info.frames
-        val outCount = LinearResampler.outputCount(frames, info.sampleRate, SAMPLE_RATE)
-        if (outCount > Int.MAX_VALUE - 16) throw IOException("Audiodatei ist zu lang")
-        val result = FloatArray(outCount.toInt())
-        if (frames == 0L) return result
+        return info
+    }
 
+    /** Dekodiert blockweise (64 KB) nach 16 kHz mono Float und reicht jeden Block an [sink] weiter. */
+    private fun decode(file: File, info: Info, sink: (FloatArray, Int) -> Unit) {
+        val frames = info.frames
+        if (frames == 0L) return
+        val bytesPerSample = (info.bitsPerSample + 7) / 8
+        val isFloat = info.format == FORMAT_FLOAT
         val resampler = LinearResampler(info.sampleRate, SAMPLE_RATE)
         val block = info.blockAlign
         val framesPerChunk = 16_384
         val raw = ByteArray(framesPerChunk * block)
         val mono = FloatArray(framesPerChunk)
         val resampled = FloatArray(resampler.maxOutput(framesPerChunk))
-        var outPos = 0
         var framesLeft = frames
 
         BufferedInputStream(FileInputStream(file), 64 * 1024).use { input ->
@@ -151,16 +215,10 @@ object WavIO {
                 if (got <= 0) break
                 decodeFrames(raw, got, info.channels, bytesPerSample, isFloat, mono)
                 val n = resampler.process(mono, got, resampled)
-                val copy = minOf(n, result.size - outPos)
-                if (copy > 0) {
-                    System.arraycopy(resampled, 0, result, outPos, copy)
-                    outPos += copy
-                }
+                if (n > 0) sink(resampled, n)
                 framesLeft -= got
             }
         }
-        // Bei vorzeitigem Dateiende bleibt der Rest still (0f) – Länge stimmt mit durationSec überein.
-        return result
     }
 
     /** Dauer in Sekunden laut Datei (bei kaputtem Header aus der Dateigröße). 0 bei Fehler. */

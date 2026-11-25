@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import de.protokollki.data.AppSettings
 import de.protokollki.data.MeetingRepository
 import de.protokollki.data.MeetingStatus
+import de.protokollki.engine.DiskSpace
 import de.protokollki.service.ProcessingService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,6 +45,8 @@ object Recorder {
     private const val RATE = WavIO.SAMPLE_RATE
     private const val CHUNK = RATE / 10          // 100 ms
     private const val MAX_LEVELS = 120
+    private const val LOW_SPACE_STOP =
+        "Der Speicher ist fast voll. Die Aufnahme wurde gespeichert und beendet."
 
     private val _state = MutableStateFlow(RecState())
     val state: StateFlow<RecState> = _state.asStateFlow()
@@ -75,6 +78,16 @@ object Recorder {
             PackageManager.PERMISSION_GRANTED
         ) {
             markError(id, "Keine Berechtigung für das Mikrofon. Bitte den Zugriff erlauben.")
+            _state.value = RecState()
+            return id
+        }
+
+        // Ohne freien Speicher gar nicht erst starten (sonst bricht die Aufnahme nach Sekunden ab)
+        val free = DiskSpace.freeBytes(File(created.audioFile).parentFile ?: ctx.filesDir)
+        if (free < DiskSpace.MIN_FREE_TO_START) {
+            markError(id, "Zu wenig Speicherplatz frei (${DiskSpace.format(free)}). Für eine Aufnahme werden " +
+                "mindestens ${DiskSpace.format(DiskSpace.MIN_FREE_TO_START)} benötigt (etwa 115 MB je Stunde). " +
+                "Bitte Platz schaffen und erneut aufnehmen.")
             _state.value = RecState()
             return id
         }
@@ -205,7 +218,17 @@ object Recorder {
 
             val buf = ShortArray(CHUNK)
             val levels = ArrayDeque<Float>(MAX_LEVELS + 1)
+            val dir = File(meeting.audioFile).parentFile
+            var nextSpaceCheck = 0L
             while (!stopRequested) {
+                // Etwa alle 10 s freien Speicher prüfen: lieber sauber beenden und alles Bisherige
+                // behalten, als mitten im Schreiben an "Speicher voll" zu scheitern.
+                if (samples >= nextSpaceCheck) {
+                    nextSpaceCheck = samples + RATE * 10L
+                    if (dir != null && DiskSpace.freeBytes(dir) < DiskSpace.MIN_FREE_WHILE_RECORDING) {
+                        throw IllegalStateException(LOW_SPACE_STOP)
+                    }
+                }
                 val n = rec.read(buf, 0, buf.size)
                 if (n < 0) {
                     throw IllegalStateException("Fehler beim Lesen vom Mikrofon ($n).")
@@ -226,13 +249,16 @@ object Recorder {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Aufnahmefehler", e)
-            error = e.message ?: "Unbekannter Fehler bei der Aufnahme."
+            error = if (DiskSpace.isDiskFull(e)) LOW_SPACE_STOP
+            else e.message ?: "Unbekannter Fehler bei der Aufnahme."
         } finally {
             runCatching { record?.stop() }
             runCatching { record?.release() }
             runCatching { ns?.release() }
             runCatching { writer?.close() }
         }
+        // Was tatsächlich auf der Platte steht (bei "Speicher voll" evtl. weniger als gelesen)
+        writer?.let { samples = minOf(samples, it.samplesWritten) }
         finish(id, samples, error)
     }
 

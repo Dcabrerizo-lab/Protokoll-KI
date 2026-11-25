@@ -29,7 +29,7 @@ if app_alive; then pass "App startet nach Abschuss wieder"; else fail "App start
 adb shell am force-stop $PKG; sleep 2; adb shell am start -n $PKG/.MainActivity > /dev/null; sleep 8
 shot kill-neustart
 st2=$(status_of "$id")
-info "Status auf Platte nach Neustart: $st2 (wird beim Laden auf RECORDED gesetzt, falls hängend)"
+info "Status auf Platte nach Neustart: $st2 (hängende Verarbeitung wird beim Laden als unterbrochen gemeldet)"
 # Erneut verarbeiten über einen neuen Import derselben Datei muss funktionieren
 r=$(import_and_wait "$SC/drei_personen.wav" "$SET" ALLGEMEIN "" 2400)
 case "$r" in

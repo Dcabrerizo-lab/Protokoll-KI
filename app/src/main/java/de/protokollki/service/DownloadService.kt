@@ -57,6 +57,12 @@ class DownloadService : LifecycleService() {
         return START_NOT_STICKY
     }
 
+    /** Android 15+: Zeitlimit für Datendienste erreicht – sofort beenden (sonst Absturz). */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        job?.cancel()
+        stopNow()
+    }
+
     private fun stopNow() {
         releaseLocks()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)

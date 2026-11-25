@@ -37,6 +37,7 @@ data class ModelState(
  */
 object ModelManager {
     private lateinit var dir: File
+    private const val MIN_FREE_DURING_DOWNLOAD = 30L * 1024 * 1024
     private lateinit var _state: MutableStateFlow<ModelState>
     val state: StateFlow<ModelState> get() = _state.asStateFlow()
 
@@ -135,7 +136,7 @@ object ModelManager {
         } catch (e: Exception) {
             _state.value = _state.value.copy(
                 downloading = false,
-                error = e.message ?: "Download fehlgeschlagen",
+                error = if (DiskSpace.isDiskFull(e)) DiskSpace.FULL_MESSAGE else e.message ?: "Download fehlgeschlagen",
                 status = "",
             )
         }
@@ -164,6 +165,7 @@ object ModelManager {
                 throw e
             } catch (e: Exception) {
                 tmp.delete()
+                if (DiskSpace.isDiskFull(e)) throw DiskFullException()   // Archiv wäre noch größer
                 return false
             }
             if (!tmp.renameTo(dest)) return false
@@ -206,10 +208,16 @@ object ModelManager {
                         val buf = ByteArray(1 shl 16)
                         var got = existing
                         var lastReport = 0L
+                        var nextSpaceCheck = got
                         while (true) {
                             currentCoroutineContext().ensureActive()
                             val n = input.read(buf)
                             if (n < 0) break
+                            // Handy nicht randvoll schreiben (Android wird dann instabil): sauber abbrechen
+                            if (got >= nextSpaceCheck) {
+                                nextSpaceCheck = got + 8_000_000L
+                                if (DiskSpace.freeBytes(target.parentFile ?: dir) < MIN_FREE_DURING_DOWNLOAD) throw DiskFullException()
+                            }
                             out.write(buf, 0, n)
                             got += n
                             if (got - lastReport > 1_000_000) { onProgress(got, size); lastReport = got }
@@ -223,6 +231,7 @@ object ModelManager {
             } catch (e: java.io.FileNotFoundException) {
                 throw e                                           // erneut versuchen hilft nicht
             } catch (e: Exception) {
+                if (DiskSpace.isDiskFull(e)) throw DiskFullException()   // erneut versuchen hilft nicht
                 if (++attempt >= attempts) throw IllegalStateException(
                     "Download fehlgeschlagen (${e.message}). Bitte WLAN prüfen und erneut versuchen.")
                 kotlinx.coroutines.delay(3000L * attempt)

@@ -16,6 +16,7 @@ import de.protokollki.data.ProtocolTemplate
 import de.protokollki.data.Segment
 import de.protokollki.data.SettingsState
 import de.protokollki.data.Speaker
+import de.protokollki.data.Summary
 import de.protokollki.data.meetingFromJson
 import de.protokollki.data.toJson
 import de.protokollki.engine.AskEngine
@@ -34,6 +35,7 @@ import de.protokollki.privacy.AppLock
 import de.protokollki.privacy.PrivacyReport
 import de.protokollki.privacy.Redactor
 import de.protokollki.privacy.Retention
+import de.protokollki.service.PowerStatus
 import de.protokollki.service.ProcessingService
 import de.protokollki.testutil.Documents
 import de.protokollki.testutil.Fixtures
@@ -390,13 +392,22 @@ class PlatformTest {
             .copy(segments = listOf(Segment(0, 0f, 1f, "Hallo")))
         place(busy)
         TestEnv.writeWav(File(busy.audioFile), TestEnv.tone(2f))
+        // Absturz bei der Neuerstellung eines fertigen Protokolls
+        val regen = base("Neuerstellung unterbrochen", MeetingStatus.SUMMARIZING)
+            .copy(segments = listOf(Segment(0, 0f, 1f, "Hallo")), summary = Summary(overview = "Alt"))
+        place(regen)
+        TestEnv.writeWav(File(regen.audioFile), TestEnv.tone(2f))
+        // Absturz beim Speichern: nur die vollständige Hilfsdatei liegt vor
+        val half = base("Nur Hilfsdatei", MeetingStatus.DONE)
+        File(root, half.id).mkdirs()
+        File(root, "${half.id}/meeting.json.tmp").writeText(half.toJson().toString())
         // Kaputte Datei darf das Laden nicht verhindern
         File(root, "kaputt").mkdirs()
         File(root, "kaputt/meeting.json").writeText("{ das ist kein JSON")
 
         TestEnv.reloadMeetingRepository()
 
-        assertEquals(3, MeetingRepository.meetings.value.size)
+        assertEquals(5, MeetingRepository.meetings.value.size)
         val repaired = MeetingRepository.get(crashed.id)!!
         assertEquals(MeetingStatus.RECORDED, repaired.status)
         assertNull(repaired.error)
@@ -410,9 +421,30 @@ class PlatformTest {
         assertEquals(MeetingStatus.ERROR, lost.status)
         assertEquals("Aufnahme wurde unterbrochen.", lost.error)
 
+        // Keine automatische Wiederaufnahme (Endlosschleife bei wiederholbarem Absturz),
+        // sondern verständlich als fehlgeschlagen; das Transkript bleibt für "Erneut versuchen"
         val reset = MeetingRepository.get(busy.id)!!
-        assertEquals(MeetingStatus.RECORDED, reset.status)
+        assertEquals(MeetingStatus.ERROR, reset.status)
+        assertEquals(MeetingRepository.INTERRUPTED_MESSAGE, reset.error)
+        assertEquals(1, reset.segments.size)
         assertFalse(reset.isBusy)
+        assertEquals(MeetingStatus.ERROR, fromDisk(busy.id).status)
+
+        val regenerated = MeetingRepository.get(regen.id)!!
+        assertEquals(MeetingStatus.DONE, regenerated.status)
+        assertEquals("Alt", regenerated.summary.overview)
+
+        assertEquals(MeetingStatus.DONE, MeetingRepository.get(half.id)!!.status)
+        assertTrue(File(root, "${half.id}/meeting.json").exists())
+    }
+
+    @Test
+    fun meetingRepository_saveIsAtomic_noTempFileLeft() {
+        val m = MeetingRepository.create("Atomar", MeetingStatus.RECORDED)
+        repeat(20) { i -> MeetingRepository.update(m.id) { it.copy(durationSec = i.toFloat()) } }
+        val dir = File(context.filesDir, "meetings/${m.id}")
+        assertFalse("Hilfsdatei liegt noch", File(dir, "meeting.json.tmp").exists())
+        assertEquals(19f, fromDisk(m.id).durationSec)
     }
 
     // ================================================================ Vorlesen
@@ -628,6 +660,19 @@ class PlatformTest {
 
         AskEngine.ask(context, "   ")
         assertEquals(AskState(), AskEngine.state.value)
+    }
+
+    @Test
+    fun powerStatus_readsBattery_andWarnsOnlyWhenLowWithoutCharger() {
+        val b = PowerStatus.battery(context)
+        assertNotNull("Akkustand nicht lesbar", b)
+        assertTrue("Akkustand ${b!!.percent} %", b.percent in 0..100)
+        val w = PowerStatus.warning(context)
+        if (b.plugged || b.percent >= PowerStatus.LOW_BATTERY_PERCENT) {
+            assertTrue("Warnung trotz Ladegerät/genug Akku: $w", w == null || w.startsWith("Energiesparmodus"))
+        } else {
+            assertTrue("keine Akku-Warnung bei ${b.percent} %: $w", w != null && w.contains("Ladegerät"))
+        }
     }
 
     @Test

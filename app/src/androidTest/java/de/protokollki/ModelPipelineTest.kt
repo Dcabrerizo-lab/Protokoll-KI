@@ -3,6 +3,8 @@ package de.protokollki
 import android.net.Uri
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.protokollki.audio.FloatAudio
+import de.protokollki.audio.MappedPcm16Audio
 import de.protokollki.audio.WavIO
 import de.protokollki.audio.importAudio
 import de.protokollki.data.AppSettings
@@ -211,6 +213,52 @@ class ModelPipelineTest {
         val turns = t.diarize(samples, 3) { true }
         val speakers = turns.map { it.speaker }.distinct().size
         assertTrue("nach Abbruch: $speakers Sprecher bei vorgegebenen 3", speakers in 2..3)
+    }
+
+    /**
+     * Lange Aufnahmen (über 45 min) werden abschnittsweise nach Sprechern getrennt, damit nie die
+     * ganze Aufnahme als FloatArray im Speicher liegt. Hier mit kleinen Abschnitten (35 s) auf
+     * meeting.wav: die Personen müssen über die Abschnittsgrenze hinweg dieselben bleiben.
+     */
+    @Test
+    fun transcriber_windowedDiarization_linksSpeakersAcrossWindows() {
+        val samples = samples()
+        val duration = samples.size / 16_000f
+        val t = Transcriber(set, "de").apply { singlePassMaxSec = 30f; windowSec = 35f }
+        val progress = mutableListOf<Float>()
+        val turns = t.diarize(FloatAudio(samples), 0) { f -> progress += f; true }
+        TestEnv.log("Abschnittsweise Diarisierung: ${turns.size} Abschnitte, Sprecher ${turns.map { it.speaker }.distinct()}, " +
+            "Fortschritt ${progress.take(3)}…${progress.takeLast(3)}")
+        assertTrue("kein Fortschritt gemeldet", progress.isNotEmpty())
+        assertTrue("Fortschritt außerhalb 0..1: $progress", progress.all { it in 0f..1f })
+        assertEquals("Fortschritt endet nicht bei 100 %", 1f, progress.last(), 1e-4f)
+        assertTrue("keine Sprecherabschnitte", turns.isNotEmpty())
+        assertTrue("zweiter Abschnitt fehlt", turns.any { it.start >= 35f })
+        assertTrue("Abschnitt außerhalb der Aufnahme", turns.all { it.start >= 0f && it.end <= duration + 0.5f })
+        assertEquals("nicht zeitlich sortiert", turns.sortedBy { it.start }, turns)
+        val speakers = turns.map { it.speaker }.distinct().size
+        assertTrue("$speakers Personen über zwei Abschnitte, erwartet 2–4 (3) – Verbindung der Abschnitte?", speakers in 2..4)
+
+        // Vorgegebene Teilnehmerzahl gilt für die ganze Aufnahme
+        val fixed = t.diarize(FloatAudio(samples), 2) { true }
+        assertTrue("mehr als 2 Personen bei Vorgabe 2", fixed.map { it.speaker }.distinct().size <= 2)
+
+        // Weiter wie in der App: Abschnitte planen und transkribieren funktioniert
+        val chunks = t.planChunks(turns, FloatAudio(samples))
+        val segments = t.transcribe(FloatAudio(samples), chunks) { _, _, _ -> true }
+        assertTranscriptSane(segments, duration)
+    }
+
+    /** Die App liest die Aufnahme abschnittsweise aus der Datei – Ergebnis wie aus dem Speicher. */
+    @Test
+    fun mappedAudio_equalsInMemorySamples() {
+        val wav = TestEnv.meetingWav()
+        val inMemory = samples()
+        MappedPcm16Audio.open(wav.absolutePath, File(context.cacheDir, "audio-test")).use { a ->
+            assertEquals(inMemory.size, a.size)
+            val probe = 16_000 * 30
+            org.junit.Assert.assertArrayEquals(inMemory.copyOfRange(probe, probe + 16_000), a.floats(probe, probe + 16_000), 1f / 32768f)
+        }
     }
 
     // ================================================================ Gesamte Verarbeitung

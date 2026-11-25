@@ -12,6 +12,7 @@ import de.protokollki.data.AppSettings
 import de.protokollki.data.Meeting
 import de.protokollki.data.MeetingRepository
 import de.protokollki.data.MeetingStatus
+import de.protokollki.engine.DiskSpace
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -72,8 +73,12 @@ suspend fun importAudio(context: Context, uri: Uri): Meeting = withContext(Dispa
         Log.e(TAG, "Import fehlgeschlagen", e)
         tmp.delete()
         meetingId?.let { MeetingRepository.delete(it) }
-        val msg = if (e is OutOfMemoryError) "Nicht genügend Arbeitsspeicher für den Import."
-        else "Die Datei konnte nicht gelesen werden. Bitte eine gängige Audio- oder Videodatei wählen."
+        val msg = when {
+            e is OutOfMemoryError -> "Nicht genügend Arbeitsspeicher für den Import."
+            DiskSpace.isDiskFull(e) -> "Zu wenig Speicherplatz für den Import (etwa 115 MB je Stunde Audio). " +
+                "Bitte Platz schaffen und erneut versuchen."
+            else -> "Die Datei konnte nicht gelesen werden. Bitte eine gängige Audio- oder Videodatei wählen."
+        }
         throw AudioImportException(msg, e)
     }
 }

@@ -1,5 +1,7 @@
 package de.protokollki.engine
 
+import de.protokollki.audio.Audio16k
+import de.protokollki.audio.FloatAudio
 import kotlin.math.sqrt
 
 /**
@@ -14,19 +16,42 @@ object AudioLevel {
     private const val TARGET_RMS = 0.1f
     private const val MAX_GAIN = 100f
 
-    fun gain(samples: FloatArray): Float {
-        val frames = samples.size / FRAME
+    fun gain(samples: FloatArray): Float = gain(FloatAudio(samples))
+
+    /**
+     * Wie [gain], liest das Audio aber abschnittsweise (für lange Aufnahmen direkt aus der Datei).
+     * Zusatzspeicher: ein Float je 25-ms-Rahmen (2 h ≈ 1,2 MB).
+     */
+    fun gain(audio: Audio16k): Float {
+        val frames = audio.size / FRAME
         if (frames == 0) return 1f
-        val rms = FloatArray(frames) { f ->
-            var e = 0.0
-            for (i in f * FRAME until (f + 1) * FRAME) e += samples[i] * samples[i]
-            sqrt(e / FRAME).toFloat()
+        val rms = FloatArray(frames)
+        val framesPerBlock = 4096
+        var f = 0
+        while (f < frames) {
+            val n = minOf(framesPerBlock, frames - f)
+            val block = audio.floats(f * FRAME, (f + n) * FRAME)
+            for (k in 0 until n) {
+                var e = 0.0
+                for (i in k * FRAME until (k + 1) * FRAME) e += block[i] * block[i]
+                rms[f + k] = sqrt(e / FRAME).toFloat()
+            }
+            f += n
         }
         val median = rms.sortedArray()[frames / 2]
-        val loud = rms.filter { it >= median }
-        if (loud.isEmpty()) return 1f
-        val level = loud.average().toFloat().coerceAtLeast(1e-5f)
+        var sum = 0.0
+        var count = 0
+        for (v in rms) if (v >= median) { sum += v; count++ }
+        if (count == 0) return 1f
+        val level = (sum / count).toFloat().coerceAtLeast(1e-5f)
         return (TARGET_RMS / level).coerceAtMost(MAX_GAIN)
+    }
+
+    /** Verstärkt [samples] an Ort und Stelle (kein zweites Array). Gibt [samples] zurück. */
+    fun applyGain(samples: FloatArray, g: Float): FloatArray {
+        if (g in 0.9f..1.1f) return samples
+        for (i in samples.indices) samples[i] = (samples[i] * g).coerceIn(-1f, 1f)
+        return samples
     }
 
     fun normalize(samples: FloatArray): FloatArray {

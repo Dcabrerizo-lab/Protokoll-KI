@@ -3,8 +3,10 @@ package de.protokollki
 import android.app.ActivityManager
 import android.content.Context
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Debug
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -18,6 +20,7 @@ import de.protokollki.engine.ModelManager
 import de.protokollki.engine.ModelSet
 import de.protokollki.export.ExportFormat
 import de.protokollki.export.Exporter
+import de.protokollki.service.PowerStatus
 import de.protokollki.service.ProcessingService
 import de.protokollki.testutil.Documents
 import de.protokollki.testutil.TestEnv
@@ -83,8 +86,21 @@ class RealDeviceTest {
         val maxNative = AtomicLong(0)
         val minAvail = AtomicLong(Long.MAX_VALUE)
         val lowMemorySeen = AtomicBoolean(false)
+        // Akku und Wärme: Stand vorher/nachher, höchste Akkutemperatur, höchster Thermal-Status
+        val before = PowerStatus.battery(context)
+        val capacityBefore = batteryCapacity()
+        val maxTempTenths = AtomicLong(Long.MIN_VALUE)
+        val maxThermal = AtomicLong(-1)
+        val pluggedSeen = AtomicBoolean(before?.plugged == true)
         val sampler = Thread {
             while (running.get()) {
+                runCatching {
+                    PowerStatus.battery(context)?.let { b ->
+                        b.temperatureC?.let { t -> maxTempTenths.accumulateAndGet((t * 10).toLong()) { a, c -> maxOf(a, c) } }
+                        if (b.plugged) pluggedSeen.set(true)
+                    }
+                    thermalStatus()?.let { t -> maxThermal.accumulateAndGet(t.toLong()) { a, c -> maxOf(a, c) } }
+                }
                 runCatching {
                     val mi = Debug.MemoryInfo().also { Debug.getMemoryInfo(it) }
                     maxPss.accumulateAndGet(mi.totalPss * 1024L) { a, b -> maxOf(a, b) }
@@ -107,7 +123,37 @@ class RealDeviceTest {
             report("$label.max_nativ_mb", mb(maxNative.get()))
             report("$label.min_frei_ram_mb", if (minAvail.get() == Long.MAX_VALUE) "?" else mb(minAvail.get()))
             report("$label.speicher_knapp", lowMemorySeen.get())
+            val after = PowerStatus.battery(context)
+            report("$label.akku_vorher", capacityBefore ?: before?.percent ?: "?")
+            report("$label.akku_nachher", batteryCapacity() ?: after?.percent ?: "?")
+            report("$label.akku_temp_max", if (maxTempTenths.get() == Long.MIN_VALUE) "?" else "%.1f".format(java.util.Locale.ROOT, maxTempTenths.get() / 10.0))
+            report("$label.thermal_max", if (maxThermal.get() < 0) "?" else thermalName(maxThermal.get().toInt()))
+            report("$label.laedt", pluggedSeen.get())
         }
+    }
+
+    /** Akkustand in Prozent laut BatteryManager (genauer als der Broadcast), null wenn unbekannt. */
+    private fun batteryCapacity(): Int? = runCatching {
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+        bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
+    }.getOrNull()
+
+    /** PowerManager.getCurrentThermalStatus (ab Android 10), sonst null. */
+    private fun thermalStatus(): Int? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        return pm.currentThermalStatus
+    }
+
+    private fun thermalName(s: Int): String = when (s) {
+        0 -> "0 (normal)"
+        1 -> "1 (leicht)"
+        2 -> "2 (mittel)"
+        3 -> "3 (stark – Drosselung)"
+        4 -> "4 (kritisch)"
+        5 -> "5 (Notfall)"
+        6 -> "6 (Abschaltung)"
+        else -> s.toString()
     }
 
     private fun assetToCache(asset: String): File {

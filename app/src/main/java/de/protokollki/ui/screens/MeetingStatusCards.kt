@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Computer
@@ -45,6 +46,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -56,10 +59,13 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import de.protokollki.data.Meeting
 import de.protokollki.data.MeetingStatus
+import de.protokollki.service.PowerStatus
+import kotlinx.coroutines.delay
 import de.protokollki.ui.theme.RecordRed
 
 /** Statusbereich oberhalb der Tabs (Aufnahme, bereit, Verarbeitung, Fehler). */
@@ -79,8 +85,8 @@ fun StatusSection(
     when {
         m.status == MeetingStatus.RECORDING -> RecordingCard(recordingThis, onOpenRecording, modifier)
         m.status == MeetingStatus.RECORDED ->
-            ReadyCard(m, modelsInstalled, onProcess, onOpenModels, modifier, onSendToPc)
-        m.isBusy -> ProcessingCard(m, onCancel, modifier)
+            ReadyCard(m, modelsInstalled, onProcess, onOpenModels, modifier, onSendToPc, rememberPowerWarning())
+        m.isBusy -> ProcessingCard(m, onCancel, modifier, rememberPowerWarning())
         m.status == MeetingStatus.ERROR -> ErrorCard(m, modelsInstalled, onRetry, modifier)
         else -> Unit
     }
@@ -136,6 +142,7 @@ private fun ReadyCard(
     onOpenModels: () -> Unit,
     modifier: Modifier,
     onSendToPc: (() -> Unit)? = null,
+    powerWarning: String? = null,
 ) {
     val cs = MaterialTheme.colorScheme
     var count by remember(m.id) { mutableIntStateOf(m.expectedSpeakers) }
@@ -170,6 +177,10 @@ private fun ReadyCard(
             Spacer(Modifier.height(6.dp))
             SpeakerCountSelector(value = count, onChange = { count = it })
             Spacer(Modifier.height(16.dp))
+            if (powerWarning != null) {
+                PowerWarning(powerWarning)
+                Spacer(Modifier.height(12.dp))
+            }
             if (modelsInstalled) {
                 Button(
                     onClick = { onProcess(count) },
@@ -226,7 +237,7 @@ private fun phaseIndex(m: Meeting): Int {
 }
 
 @Composable
-private fun ProcessingCard(m: Meeting, onCancel: () -> Unit, modifier: Modifier) {
+private fun ProcessingCard(m: Meeting, onCancel: () -> Unit, modifier: Modifier, powerWarning: String? = null) {
     val cs = MaterialTheme.colorScheme
     val phase = phaseIndex(m)
     val progress by animateFloatAsState(m.progress.coerceIn(0f, 1f), label = "proc")
@@ -280,6 +291,10 @@ private fun ProcessingCard(m: Meeting, onCancel: () -> Unit, modifier: Modifier)
             if (m.progressText.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text(m.progressText, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+            }
+            if (powerWarning != null) {
+                Spacer(Modifier.height(10.dp))
+                PowerWarning(powerWarning)
             }
             Spacer(Modifier.height(12.dp))
             OutlinedButton(onClick = onCancel, modifier = Modifier.align(Alignment.End)) {
@@ -369,5 +384,36 @@ private fun ErrorCard(m: Meeting, modelsInstalled: Boolean, onRetry: () -> Unit,
                 }
             }
         }
+    }
+}
+
+/** Akku-/Energiespar-Hinweis; wird alle 30 s neu gelesen. */
+@Composable
+private fun rememberPowerWarning(): String? {
+    val context = LocalContext.current
+    var warning by remember { mutableStateOf(PowerStatus.warning(context)) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            warning = PowerStatus.warning(context)
+        }
+    }
+    return warning
+}
+
+@Composable
+private fun PowerWarning(text: String) {
+    val cs = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(cs.tertiaryContainer)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Filled.BatteryAlert, contentDescription = null, tint = cs.onTertiaryContainer, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(text, style = MaterialTheme.typography.bodySmall, color = cs.onTertiaryContainer)
     }
 }

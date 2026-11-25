@@ -41,4 +41,16 @@ class AudioLevelTest {
         val ok = tone(0.141f)
         assertSame(ok, AudioLevel.normalize(ok))
     }
+
+    @Test
+    fun streamingGainEqualsArrayGain_andApplyGainInPlaceEqualsNormalize() {
+        val a = tone(0.02f, 3) + FloatArray(16000 * 2) + tone(0.3f, 1)
+        val audio = de.protokollki.audio.FloatAudio(a)
+        assertEquals(AudioLevel.gain(a), AudioLevel.gain(audio), 0f)
+        val expected = AudioLevel.normalize(a)
+        val inPlace = a.copyOf()
+        val result = AudioLevel.applyGain(inPlace, AudioLevel.gain(a))
+        assertSame(inPlace, result)
+        org.junit.Assert.assertArrayEquals(expected, inPlace, 0f)
+    }
 }

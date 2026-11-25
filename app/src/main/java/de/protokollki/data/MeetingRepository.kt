@@ -23,6 +23,10 @@ object MeetingRepository {
         val loaded = root.listFiles().orEmpty().mapNotNull { dir ->
             runCatching {
                 meetingFromJson(JSONObject(File(dir, "meeting.json").readText()))
+            }.recoverCatching {
+                // Absturz zwischen Schreiben und Umbenennen: vollständige Hilfsdatei übernehmen
+                val tmp = File(dir, "meeting.json.tmp")
+                meetingFromJson(JSONObject(tmp.readText())).also { tmp.renameTo(File(dir, "meeting.json")) }
             }.getOrNull()
         }.map {
             // Nach Absturz/Neustart hängende Zustände zurücksetzen
@@ -35,8 +39,15 @@ object MeetingRepository {
                             .getOrDefault(0f))
                     else it.copy(status = MeetingStatus.ERROR, error = "Aufnahme wurde unterbrochen.")
                 }
-                it.isBusy -> it.copy(status = MeetingStatus.RECORDED, progress = 0f,
-                    progressText = "")
+                // Prozess wurde während der Verarbeitung beendet (Absturz, Systemabschuss, kill -9).
+                // Nicht automatisch neu starten (bei einem wiederholbaren Absturz wäre das eine
+                // Endlosschleife), sondern verständlich melden; "Erneut versuchen" setzt fort
+                // (mit fertigem Transkript nur noch der Protokoll-Schritt).
+                it.isBusy -> if (it.segments.isNotEmpty() && !it.summary.isEmpty)
+                    // Neuerstellung eines fertigen Protokolls unterbrochen: altes Protokoll bleibt gültig
+                    it.copy(status = MeetingStatus.DONE, progress = 0f, progressText = "")
+                else it.copy(status = MeetingStatus.ERROR, progress = 0f, progressText = "",
+                    error = INTERRUPTED_MESSAGE)
                 else -> it
             }
         }
@@ -61,11 +72,31 @@ object MeetingRepository {
 
     fun get(id: String): Meeting? = _meetings.value.firstOrNull { it.id == id }
 
+    const val INTERRUPTED_MESSAGE =
+        "Die Verarbeitung wurde unterbrochen, weil die App beendet wurde (z. B. vom System bei " +
+            "wenig Arbeitsspeicher). Bitte „Erneut versuchen“ tippen."
+
+    /**
+     * Speichert atomar (erst Hilfsdatei, dann umbenennen): wird die App beim Schreiben beendet,
+     * bleibt die alte meeting.json vollständig erhalten statt abgeschnitten (die Besprechung
+     * wäre sonst beim nächsten Start verschwunden). Ist der Speicher voll, bleibt der Stand im
+     * Arbeitsspeicher erhalten und die App stürzt nicht ab.
+     */
     @Synchronized
     fun save(m: Meeting) {
-        File(dirFor(m.id), "meeting.json").writeText(m.toJson().toString())
         _meetings.value = (_meetings.value.filterNot { it.id == m.id } + m)
             .sortedByDescending { it.createdAt }
+        try {
+            val dir = dirFor(m.id)
+            val tmp = File(dir, "meeting.json.tmp")
+            tmp.writeText(m.toJson().toString())
+            if (!tmp.renameTo(File(dir, "meeting.json"))) {
+                File(dir, "meeting.json").writeText(tmp.readText())
+                tmp.delete()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MeetingRepository", "Besprechung ${m.id} konnte nicht gespeichert werden", e)
+        }
     }
 
     /** Atomar ändern. Fortschritt wird nur im Speicher gehalten, nicht jedes Mal geschrieben. */

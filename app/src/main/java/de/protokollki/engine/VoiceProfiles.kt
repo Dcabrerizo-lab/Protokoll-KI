@@ -3,6 +3,8 @@ package de.protokollki.engine
 import android.content.Context
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
+import de.protokollki.audio.Audio16k
+import de.protokollki.audio.FloatAudio
 import de.protokollki.data.MeetingRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -67,7 +69,7 @@ object VoiceProfiles {
             require(VoiceMath.speechSeconds(samples) >= 8f) {
                 "Zu wenig Sprache erkannt. Bitte etwa 15 Sekunden laut und deutlich sprechen."
             }
-            val emb = Embedder().use { it.embed(samples) }
+            val emb = SpeakerEmbedder().use { it.embed(samples) }
             add(name, emb)
         }
 
@@ -135,12 +137,19 @@ object VoiceProfiles {
         meetingId: String,
         samples: FloatArray,
         turns: List<Transcriber.Turn>,
+    ): Map<Int, VoiceProfile> = identify(context, meetingId, FloatAudio(samples), turns)
+
+    fun identify(
+        context: Context,
+        meetingId: String,
+        samples: Audio16k,
+        turns: List<Transcriber.Turn>,
     ): Map<Int, VoiceProfile> {
         init(context)
         val perSpeaker = turns.groupBy { it.speaker }
         if (perSpeaker.isEmpty()) return emptyMap()
         val embeddings = mutableMapOf<Int, FloatArray>()
-        Embedder().use { embedder ->
+        SpeakerEmbedder().use { embedder ->
             for ((spk, list) in perSpeaker) {
                 val audio = VoiceMath.collectAudio(samples, list.map { it.start to it.end }, maxSeconds = 30f)
                 if (audio.size < 16000 * 2) continue
@@ -170,28 +179,6 @@ object VoiceProfiles {
     fun forgetMeetingSpeaker(meetingId: String, speakerId: Int) {
         val e = loadMeetingEmbeddings(meetingId)?.toMutableMap() ?: return
         e.remove(speakerId); saveMeetingEmbeddings(meetingId, e)
-    }
-
-    private class Embedder : AutoCloseable {
-        private val extractor = SpeakerEmbeddingExtractor(
-            config = SpeakerEmbeddingExtractorConfig(
-                model = ModelManager.file(ModelCatalog.EMBEDDING).absolutePath,
-                numThreads = 2,
-            )
-        )
-
-        fun embed(samples: FloatArray): FloatArray {
-            val stream = extractor.createStream()
-            try {
-                stream.acceptWaveform(samples, 16000)
-                stream.inputFinished()
-                return extractor.compute(stream)
-            } finally {
-                stream.release()
-            }
-        }
-
-        override fun close() = extractor.release()
     }
 
     private fun FloatArray.toJson() = JSONArray().also { a -> forEach { a.put(it.toDouble()) } }
@@ -242,7 +229,10 @@ object VoiceMath {
     }
 
     /** Sammelt bis zu [maxSeconds] Audio aus den längsten Abschnitten. */
-    fun collectAudio(samples: FloatArray, spans: List<Pair<Float, Float>>, maxSeconds: Float): FloatArray {
+    fun collectAudio(samples: FloatArray, spans: List<Pair<Float, Float>>, maxSeconds: Float): FloatArray =
+        collectAudio(FloatAudio(samples), spans, maxSeconds)
+
+    fun collectAudio(samples: Audio16k, spans: List<Pair<Float, Float>>, maxSeconds: Float): FloatArray {
         val sorted = spans.sortedByDescending { it.second - it.first }
         val out = ArrayList<FloatArray>()
         var total = 0
@@ -252,7 +242,7 @@ object VoiceMath {
             val b = (e * 16000).toInt().coerceIn(a, samples.size)
             val take = minOf(b - a, max - total)
             if (take <= 0) break
-            out += samples.copyOfRange(a, a + take); total += take
+            out += samples.floats(a, a + take); total += take
         }
         val result = FloatArray(total)
         var pos = 0
@@ -273,4 +263,27 @@ object VoiceMath {
         }
         return voiced * win / 16000f
     }
+}
+
+/** Stimm-Vektor (WeSpeaker) aus Audio. Immer mit [close] freigeben. */
+class SpeakerEmbedder(threads: Int = 2) : AutoCloseable {
+    private val extractor = SpeakerEmbeddingExtractor(
+        config = SpeakerEmbeddingExtractorConfig(
+            model = ModelManager.file(ModelCatalog.EMBEDDING).absolutePath,
+            numThreads = threads,
+        )
+    )
+
+    fun embed(samples: FloatArray): FloatArray {
+        val stream = extractor.createStream()
+        try {
+            stream.acceptWaveform(samples, 16000)
+            stream.inputFinished()
+            return extractor.compute(stream)
+        } finally {
+            stream.release()
+        }
+    }
+
+    override fun close() = extractor.release()
 }

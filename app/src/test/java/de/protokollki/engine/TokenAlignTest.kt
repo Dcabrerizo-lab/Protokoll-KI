@@ -54,4 +54,22 @@ class TokenAlignTest {
         assertEquals(listOf(0f to 17f, 17f to 34f, 34f to 51f, 51f to 60f), win)
         assertEquals(listOf(0f to 10f), TokenAlign.windows(10f) { a, _ -> a })
     }
+
+    @Test
+    fun sortedLookupMatchesLinearSearch_onLongRecordings() {
+        val rnd = kotlin.random.Random(3)
+        // 3000 Abschnitte mit Lücken und direkt anschließenden Grenzen (wie nach planChunks)
+        val turns = mutableListOf<Transcriber.Turn>()
+        var t = 0.5f
+        repeat(3000) {
+            val len = 0.6f + rnd.nextFloat() * 20f
+            turns += Transcriber.Turn(t, t + len, rnd.nextInt(6))
+            t += len + if (rnd.nextBoolean()) 0f else rnd.nextFloat() * 3f
+        }
+        val lookup = TokenAlign.SortedTurns.of(turns)!!
+        val probes = List(20_000) { rnd.nextFloat() * (t + 5f) } + turns.flatMap { listOf(it.start, it.end) } + listOf(0f, -1f)
+        for (p in probes) assertEquals("t=$p", TokenAlign.speakerAt(p, turns), lookup.speakerAt(p))
+        // überlappende/unsortierte Abschnitte: kein Schnellweg (Ergebnis wie bisher)
+        assertEquals(null, TokenAlign.SortedTurns.of(listOf(Transcriber.Turn(0f, 5f, 0), Transcriber.Turn(3f, 6f, 1))))
+    }
 }

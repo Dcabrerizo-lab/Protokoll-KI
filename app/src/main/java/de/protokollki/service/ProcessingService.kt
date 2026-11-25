@@ -16,7 +16,8 @@ import androidx.lifecycle.lifecycleScope
 import de.protokollki.MainActivity
 import de.protokollki.ProtokollApp
 import de.protokollki.R
-import de.protokollki.audio.WavIO
+import de.protokollki.audio.MappedPcm16Audio
+import de.protokollki.engine.DiskSpace
 import de.protokollki.data.AppSettings
 import de.protokollki.data.MeetingRepository
 import de.protokollki.data.MeetingStatus
@@ -32,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -45,13 +47,24 @@ class ProcessingService : LifecycleService() {
     private val queue = Channel<Job>(Channel.UNLIMITED)
     private val queued = mutableSetOf<String>()
     private val cancelled = AtomicBoolean(false)
+    @Volatile private var timedOut = false
     @Volatile private var currentLlm: LocalLlm? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var workerStarted = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        startInForeground("Protokoll KI arbeitet …", 0f)
+        try {
+            startInForeground("Protokoll KI arbeitet …", 0f)
+        } catch (e: Exception) {
+            // z. B. Zeitlimit für Datendienste (Android 15) aufgebraucht: melden statt abstürzen
+            android.util.Log.e(TAG, "startForeground fehlgeschlagen", e)
+            intent?.getStringExtra(EXTRA_ID)?.let { id ->
+                runCatching { fail(id, "Die Verarbeitung konnte nicht gestartet werden. Bitte die App öffnen und erneut versuchen.") }
+            }
+            if (!workerStarted) stopSelf()
+            return START_NOT_STICKY
+        }
         when (intent?.action) {
             ACTION_CANCEL -> {
                 cancelled.set(true)
@@ -79,13 +92,40 @@ class ProcessingService : LifecycleService() {
         return START_NOT_STICKY
     }
 
+    /**
+     * Android 15+: Datendienste dürfen höchstens 6 h pro Tag im Hintergrund laufen. Wird der Dienst
+     * danach nicht binnen Sekunden beendet, beendet Android die App mit einem Absturz. Daher sofort
+     * abbrechen und verständlich melden.
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        android.util.Log.w(TAG, "Zeitlimit für Hintergrundverarbeitung erreicht")
+        timedOut = true
+        cancelled.set(true)
+        currentLlm?.cancel()
+        runCatching { ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE) }
+        stopSelf()
+    }
+
     private suspend fun worker() {
         acquireWakeLock()
         try {
             while (true) {
                 val job = queue.tryReceive().getOrNull() ?: break
+                if (timedOut) {
+                    runCatching { fail(job.meetingId, TIMEOUT_MESSAGE) }
+                    synchronized(queued) { queued -= job.meetingId }
+                    continue
+                }
                 cancelled.set(false)
-                withContext(Dispatchers.Default) { run(job) }
+                try {
+                    withContext(Dispatchers.Default) { run(job) }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    // Darf den Dienst nie zum Absturz bringen (z. B. Speicher voll beim Speichern)
+                    android.util.Log.e(TAG, "Verarbeitung abgebrochen", e)
+                    runCatching { fail(job.meetingId, "Verarbeitung fehlgeschlagen: ${e.message ?: e.javaClass.simpleName}") }
+                }
                 synchronized(queued) { queued -= job.meetingId }
             }
         } finally {
@@ -118,16 +158,36 @@ class ProcessingService : LifecycleService() {
         } catch (e: LlmException) {
             if (cancelled.get()) abort(id) else fail(id, e.message ?: "Fehler im Sprachmodell")
         } catch (e: OutOfMemoryError) {
+            System.gc()
             fail(id, "Zu wenig Arbeitsspeicher. Bitte andere Apps schließen oder ein kleineres Modellpaket wählen.")
         } catch (e: Throwable) {
-            fail(id, "Verarbeitung fehlgeschlagen: ${e.message ?: e.javaClass.simpleName}")
+            fail(id, if (DiskSpace.isDiskFull(e)) DiskSpace.FULL_MESSAGE
+                else "Verarbeitung fehlgeschlagen: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 
     private fun transcribe(id: String, expectedSpeakers: Int, set: de.protokollki.engine.ModelSet) {
         progress(id, MeetingStatus.TRANSCRIBING, 0f, "Lade Aufnahme …")
         val meeting = MeetingRepository.get(id) ?: return
-        val samples = WavIO.readMono16k(meeting.audioFile)
+        // Nicht die ganze Aufnahme in den Speicher laden (3 h wären 690 MB als FloatArray),
+        // sondern abschnittsweise direkt aus der Datei lesen.
+        val scratch = File(cacheDir, "audio")
+        scratch.listFiles()?.forEach { it.delete() }   // Reste eines abgebrochenen Laufs
+        val samples = try {
+            MappedPcm16Audio.open(meeting.audioFile, scratch)
+        } catch (e: java.io.IOException) {
+            if (DiskSpace.isDiskFull(e)) throw IllegalStateException(DiskSpace.FULL_MESSAGE)
+            throw IllegalStateException("Die Aufnahme konnte nicht gelesen werden (${e.message}).")
+        }
+        samples.use { transcribeAudio(id, it, expectedSpeakers, set) }
+    }
+
+    private fun transcribeAudio(
+        id: String,
+        samples: MappedPcm16Audio,
+        expectedSpeakers: Int,
+        set: de.protokollki.engine.ModelSet,
+    ) {
         if (samples.size < 16000) throw IllegalStateException("Die Aufnahme ist zu kurz.")
         val duration = samples.size / 16000f
         MeetingRepository.update(id) { it.copy(durationSec = duration) }
@@ -248,17 +308,26 @@ class ProcessingService : LifecycleService() {
         val now = System.currentTimeMillis()
         if (now - lastNotify > 1000) {
             lastNotify = now
-            startInForeground(text, f)
+            runCatching { startInForeground(text, f) }
+        }
+        // Für die Emulator-Tests (lange Aufnahmen): Fortschritt höchstens alle 10 s ins Systemprotokoll
+        if (now - lastLog > 10_000) {
+            lastLog = now
+            android.util.Log.i(TAG, "Fortschritt $id ${status.name} ${"%.3f".format(java.util.Locale.ROOT, f)} $text")
         }
     }
 
+    private var lastLog = 0L
+
     private fun fail(id: String, message: String) {
+        android.util.Log.w(TAG, "Fehlgeschlagen $id: $message")
         MeetingRepository.update(id) {
             it.copy(status = MeetingStatus.ERROR, error = message, progress = 0f, progressText = "")
         }
     }
 
     private fun abort(id: String) {
+        if (timedOut) { fail(id, TIMEOUT_MESSAGE); return }
         MeetingRepository.update(id) {
             // Nur ein fertiges Protokoll (Neuerstellung abgebrochen) bleibt DONE. Ein Abbruch während
             // der Transkription hinterlässt sonst ein scheinbar fertiges, aber unvollständiges Protokoll.
@@ -325,6 +394,10 @@ class ProcessingService : LifecycleService() {
         private const val ACTION_CANCEL = "de.protokollki.CANCEL"
         private const val EXTRA_ID = "id"
         private const val NOTIFICATION_ID = 42
+        private const val TAG = "ProtokollKI-Verarbeitung"
+        private const val TIMEOUT_MESSAGE =
+            "Android hat die Hintergrundverarbeitung nach mehreren Stunden beendet (Zeitlimit des Systems). " +
+                "Bitte das Handy ans Ladegerät anschließen, die App geöffnet lassen und erneut versuchen."
 
         fun process(context: Context, meetingId: String) = send(context, ACTION_PROCESS, meetingId)
 
