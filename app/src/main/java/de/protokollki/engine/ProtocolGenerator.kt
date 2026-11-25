@@ -353,7 +353,7 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
         /** "Person 2: …", "Frau Kaiser: …" – Sprecherzeile aus dem Transkript übernommen */
         private val SPEAKER_PREFIX = Regex("^\\s*(?:Person \\d+|Sprecher(?:in)? \\d+|(?:Frau|Herr)\\s+(?:Dr\\.\\s+)?[A-ZÄÖÜ][\\p{L}-]{1,30})\\s*:\\s*")
         private val DEFAULT_LABEL = Regex("^(Person|Sprecher(in)?) \\d+$")
-        private val GENERIC = Regex("^(Person \\d+|Sprecher(in)? \\d+|offen|unklar|unbekannt|keine angabe|niemand|alle|team|ich|sie|du|wir|er|ihr|-|n/?a|)$", RegexOption.IGNORE_CASE)
+        private val GENERIC = Regex("^(Person \\d+|Sprecher(in)? \\d+|offen|unklar|unbekannt|keine angabe|niemand|alle|alle beteiligten|alle mitarbeitenden|das team|team|ich|sie|du|wir|er|ihr|-|n/?a|)$", RegexOption.IGNORE_CASE)
 
         /**
          * Fall- und Übergabebesprechungen: angesprochene Personen ("Herr Krüger", "Frau Lehmann"), die
@@ -438,7 +438,9 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
                 commitments.filter { shared(it) >= 2 }.maxByOrNull { shared(it) }?.let { r = it.ref }
                     // Ohne Beleg: genau eine Zusage mit einem gemeinsamen Wort ("Kundendienst")
                     ?: if (r !in segments.indices) commitments.filter { shared(it) >= 1 }.map { it.ref }.distinct()
-                        .singleOrNull()?.let { r = it } else Unit
+                        .singleOrNull()?.let { r = it }
+                    // Beleg ist die Frage davor ("Gibt es einen Zuschuss?"), der Auftrag folgt direkt danach
+                    else commitments.firstOrNull { it.ref == r + 1 && shared(it) >= 1 }?.let { r = it.ref }
             }
             return r
         }
@@ -447,7 +449,11 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
          * Frist einer Aufgabe: Angabe des Modells, wenn sie im Beleg (oder direkt davor/danach) vorkommt,
          * sonst eine eindeutige "bis …"-Angabe aus dem Beleg, sonst "offen". Zahlwörter werden zu Ziffern.
          */
+        private val PAST_DUE = Regex("\\b(?:vorgestern|gestern|letzte[nrs]?\\s+(?:woche|monat)|vergangene[nrs]?)\\b", RegexOption.IGNORE_CASE)
+
         internal fun checkDue(t: TaskItem, segments: List<Segment>, meeting: java.time.LocalDate): String {
+            // Vergangenes ist keine Frist
+            if (PAST_DUE.containsMatchIn(t.due)) return checkDue(t.copy(due = "offen"), segments, meeting)
             val seg = segments.getOrNull(t.ref) ?: return t.due.takeIf { d -> d == "offen" ||
                 TranscriptRules.dueSupported(d, segments.joinToString(" ") { it.text }) }
                 ?.let { TranscriptRules.normalizeDue(it) } ?: "offen"
@@ -475,10 +481,12 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
             // Wortanfänge auch innerhalb von Zusammensetzungen ("reserv" in "Busreservierung")
             val sentence = c.sentence.lowercase()
             // Ausdrücklich jemand anderem zugewiesen ("Frau Albers übernimmt …"): eigene Aufgabe
+            // Auftrag mit eigener Frist, die die Aufgabe nicht trägt: nur bei deutlicher Übereinstimmung abgedeckt
+            val strict = t.due == "offen" && TranscriptRules.deadlineFromRef(c.sentence, java.time.LocalDate.of(2000, 1, 3)) != null
             if (t.ref != c.ref && TranscriptRules.assignee(c.sentence)?.substringAfterLast(' ')?.lowercase()
                     ?.let { it !in t.owner.lowercase() } == true) return false
             val shared = contentWords(t.text).count { sentence.contains(it) }
-            return shared >= 2 || (shared >= 1 && t.ref in (c.ref - 1)..(c.ref + 1))
+            return shared >= 2 || (!strict && shared >= 1 && t.ref in (c.ref - 1)..(c.ref + 1))
         }
 
         /** Der Satz eines Beitrags, der die meisten Wörter mit der Aufgabe teilt (sonst der ganze Beitrag). */

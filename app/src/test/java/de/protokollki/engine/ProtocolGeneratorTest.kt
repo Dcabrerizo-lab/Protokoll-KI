@@ -286,4 +286,10 @@ class ProtocolGeneratorTest {
         val tasks = ProtocolGenerator.parseTasks(raw, 5)
         assertEquals(listOf("Kontakt zum Kundendienst aufnehmen", "Lädt alle ein"), tasks.map { it.text })
     }
+
+    @Test
+    fun pastIsNoDeadline() {
+        val segs = listOf(Segment(0, 0f, 2f, "Ich habe die Werkstatt gestern angerufen."))
+        assertEquals("offen", ProtocolGenerator.checkDue(de.protokollki.data.TaskItem("Werkstatt anrufen", "offen", "gestern", ref = 0), segs, java.time.LocalDate.of(2026, 11, 23)))
+    }
 }
