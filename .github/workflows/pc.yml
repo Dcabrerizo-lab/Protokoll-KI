@@ -112,6 +112,7 @@ jobs:
           c.request("GET", "/api/state", headers={"X-Token": info["token"]}); s = json.loads(c.getresponse().read())
           assert "meetings" in s
           c.request("GET", "/api/state"); assert c.getresponse().status == 403   # ohne Schlüssel kein Zugriff
+          c = http.client.HTTPConnection("127.0.0.1", info["port"], timeout=10)   # 403-Antwort oben ungelesen
           for doc in ("datenschutz", "lizenzen", "impressum"):          # Rechtstexte im Paket enthalten
               c.request("GET", "/api/legal/" + doc, headers={"X-Token": info["token"]})
               t = json.loads(c.getresponse().read())["text"]
