@@ -25,7 +25,7 @@ Danach braucht es kein Internet mehr.
 Ergebnisse (Word, PDF, Markdown) liegen in `Dokumente/Protokoll KI`.
 
 ## Technik
-Python, [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Whisper, pyannote, Sprecher-Embeddings) und
+Python, [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Parakeet-Spracherkennung wie die App, pyannote, Sprecher-Embeddings) und
 `llama-server` aus [llama.cpp](https://github.com/ggml-org/llama.cpp), der nur auf `127.0.0.1` lauscht. Oberfläche als
 lokale Webseite im eigenen Fenster (pywebview / WebView2). `pkpc/generator.py` ist ein Port von
 `ProtocolGenerator.kt`; `tests/test_parity.py` stellt sicher, dass Prompts und Grammatiken wortgleich bleiben.

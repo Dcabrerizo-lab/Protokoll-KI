@@ -178,7 +178,13 @@ class ProtocolGenerator:
                 "".join(f"{t.key}: {t.text} ({t.owner})\n" for t in open_tasks)
         header = header.rstrip()
 
-        reserve = 3000 + self.model.count_tokens(header)
+        # Platz für Systemprompt, Anweisungen und Antwort freihalten
+        # Antwortlängen passend zum Kontext (bei kleinem Kontext sonst "Text zu lang")
+        ctx = self.model.context_size
+        summary_max = min(2600, ctx // 3)
+        notes_max = min(1000, ctx // 5)
+        tasks_max = min(1400, ctx // 4)
+        reserve = summary_max + 900 + self.model.count_tokens(header)
         budget = max(1500, self.model.context_size - reserve)
         chunks = self.chunk(lines, budget)
 
@@ -204,15 +210,23 @@ class ProtocolGenerator:
                     if not prog(label):
                         raise Cancelled()
                     n = self.model.complete(SYSTEM, NOTES_PROMPT % (header, i + 1, len(chunks), c),
-                                            1000, 0.2, None, inner(label))
+                                            notes_max, 0.2, None, inner(label))
                     state["step"] += 1
                     notes.append(f"Notizen zu Teil {i + 1}:\n{n}")
                 material = "\n\n".join(notes)
             label = "Schreibe Protokoll und Aufgaben …"
             if not prog(label):
                 raise Cancelled()
-            raws.append(self.model.complete(SYSTEM, SUMMARY_PROMPT % (header, extras, material),
-                                            2600, 0.2, SUMMARY_GRAMMAR, inner(label)))
+            # Notizen vieler Abschnitte können zusammen zu lang werden: dann gleichmäßig kürzen
+            fitted = material
+            for _ in range(12):
+                tokens = self.model.count_tokens(SYSTEM) + \
+                    self.model.count_tokens(SUMMARY_PROMPT % (header, extras, fitted))
+                if tokens + summary_max + 64 <= ctx:
+                    break
+                fitted = shorten_evenly(fitted, 0.8)
+            raws.append(self.model.complete(SYSTEM, SUMMARY_PROMPT % (header, extras, fitted),
+                                            summary_max, 0.2, SUMMARY_GRAMMAR, inner(label)))
             state["step"] += 1
         else:
             for i, c in enumerate(chunks):
@@ -221,7 +235,7 @@ class ProtocolGenerator:
                 if not prog(label):
                     raise Cancelled()
                 raws.append(self.model.complete(SYSTEM, TASKS_PROMPT % (header, extras, c),
-                                                1400, 0.0, TASKS_GRAMMAR, inner(label)))
+                                                tasks_max, 0.0, TASKS_GRAMMAR, inner(label)))
                 state["step"] += 1
 
         def safe_tasks(r: str) -> list[TaskItem]:
@@ -235,7 +249,7 @@ class ProtocolGenerator:
                 if not progress(0.97, "Prüfe Aufgaben …"):
                     raise Cancelled()
                 raws.append(self.model.complete(SYSTEM, TASKS_PROMPT % (header, extras, c),
-                                                1400, 0.0, TASKS_GRAMMAR, None))
+                                                tasks_max, 0.0, TASKS_GRAMMAR, None))
 
         meeting_date = dt.date()
         n = len(segments)
@@ -366,6 +380,20 @@ def split_ref(raw: str, segment_count: int) -> tuple[str, int]:
             ref = idx
     text = re.sub(r"\s+([.,;:!?])", r"\1", _REF.sub("", raw)).strip()
     return text, ref
+
+
+def shorten_evenly(text: str, factor: float) -> str:
+    """Kürzt jeden Absatz (durch Leerzeile getrennt) auf factor seiner Länge, an Zeilengrenzen."""
+    out = []
+    for part in text.split("\n\n"):
+        keep = int(len(part) * factor)
+        if len(part) <= keep:
+            out.append(part)
+            continue
+        t = part[:keep]
+        nl = t.rfind("\n")
+        out.append(t[:nl] if nl > keep // 2 else t)
+    return "\n\n".join(out)
 
 
 def repair_json(raw: str) -> str | None:
