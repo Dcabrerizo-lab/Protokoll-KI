@@ -20,10 +20,11 @@ object MeetingRepository {
     fun init(context: Context) {
         if (::root.isInitialized) return
         root = File(context.filesDir, "meetings").apply { mkdirs() }
+        rawStatus.clear()
         val loaded = root.listFiles().orEmpty().mapNotNull { dir ->
             runCatching {
                 meetingFromJson(JSONObject(File(dir, "meeting.json").readText()))
-            }.recoverCatching {
+            }.onSuccess { rawStatus[it.id] = it.status }.recoverCatching {
                 // Absturz zwischen Schreiben und Umbenennen: vollständige Hilfsdatei übernehmen
                 val tmp = File(dir, "meeting.json.tmp")
                 meetingFromJson(JSONObject(tmp.readText())).also { tmp.renameTo(File(dir, "meeting.json")) }
@@ -52,7 +53,11 @@ object MeetingRepository {
             }
         }
         _meetings.value = loaded.sortedByDescending { it.createdAt }
+        // Reparierte Zustände auch auf die Platte schreiben (sonst stünde dort weiter "in Arbeit")
+        loaded.filter { rawStatus[it.id] != it.status }.forEach { save(it) }
     }
+
+    private val rawStatus = mutableMapOf<String, MeetingStatus>()
 
     fun dirFor(id: String) = File(root, id).apply { mkdirs() }
 
