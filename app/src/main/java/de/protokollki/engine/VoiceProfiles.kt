@@ -175,7 +175,7 @@ object VoiceProfiles {
     private class Embedder : AutoCloseable {
         private val extractor = SpeakerEmbeddingExtractor(
             config = SpeakerEmbeddingExtractorConfig(
-                model = ModelManager.file(ModelCatalog.EMBEDDING).absolutePath,
+                model = ModelManager.file(ModelCatalog.VOICE_EMBEDDING).absolutePath,
                 numThreads = 2,
             )
         )

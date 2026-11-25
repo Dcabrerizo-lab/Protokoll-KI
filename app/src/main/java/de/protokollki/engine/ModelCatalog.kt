@@ -40,8 +40,17 @@ object ModelCatalog {
     private const val HF = "https://huggingface.co"
     const val MIRROR = "https://github.com/Dcabrerizo-lab/Protokoll-KI/releases/download/models-v1"
 
-    const val SEGMENTATION = "pyannote-segmentation-3-0.int8.onnx"
-    const val EMBEDDING = "wespeaker_en_voxceleb_resnet34_LM.onnx"
+    /**
+     * Sprechererkennung: volle Genauigkeit (fp32) statt int8. Die int8-Fassung fand bei Nachhall und
+     * Fernmikrofon oft gar keine Sprache (alles bei einem Sprecher); auf 18 Testszenarien sank der
+     * Zuordnungsfehler mit fp32 + CAM++ von 23 % auf 6 %, Sprecherzahl 17/18 statt 7/18 exakt.
+     */
+    const val SEGMENTATION = "pyannote-segmentation-3-0.onnx"
+    const val EMBEDDING = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx"
+    /** Clustering-Schwelle für [EMBEDDING] (stabil zwischen 0,45 und 0,75). */
+    const val CLUSTER_THRESHOLD = 0.6f
+    /** Stimmprofile bleiben beim bisherigen Modell, damit gespeicherte Profile weiter passen. */
+    const val VOICE_EMBEDDING = "wespeaker_en_voxceleb_resnet34_LM.onnx"
 
     /** Sprechererkennung, für alle Pakete gleich. */
     val common = listOf(
@@ -49,12 +58,17 @@ object ModelCatalog {
             url = "$GH/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
             target = "segmentation",
             bytes = 6_958_444,
-            extract = mapOf("sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx" to SEGMENTATION),
+            extract = mapOf("sherpa-onnx-pyannote-segmentation-3-0/model.onnx" to SEGMENTATION),
             direct = listOf(SEGMENTATION),
         ),
         ModelFile(
             url = "$GH/speaker-recongition-models/$EMBEDDING",
             target = EMBEDDING,
+            bytes = 29_596_979,
+        ),
+        ModelFile(
+            url = "$GH/speaker-recongition-models/$VOICE_EMBEDDING",
+            target = VOICE_EMBEDDING,
             bytes = 26_530_550,
         ),
     )
