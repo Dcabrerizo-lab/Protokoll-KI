@@ -18,8 +18,10 @@ GH = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
 HF = "https://huggingface.co"
 MIRROR = "https://github.com/Dcabrerizo-lab/Protokoll-KI/releases/download/models-v1"
 
-SEGMENTATION = "pyannote-segmentation-3-0.int8.onnx"
-EMBEDDING = "wespeaker_en_voxceleb_resnet34_LM.onnx"
+# fp32-Segmentierung + CAM++ (wie die App): int8 versagte bei Hall/Fernmikrofon, siehe scripts/bench
+SEGMENTATION = "pyannote-segmentation-3-0.onnx"
+EMBEDDING = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx"
+CLUSTER_THRESHOLD = 0.6
 
 
 @dataclass
@@ -54,8 +56,8 @@ def common_files() -> list[ModelFile]:
     return [
         ModelFile(SEGMENTATION, [f"{MIRROR}/{SEGMENTATION}",
                                  f"{GH}/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"],
-                  1_500_000, "sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx"),
-        ModelFile(EMBEDDING, [f"{GH}/speaker-recongition-models/{EMBEDDING}"], 26_530_550),
+                  5_992_913, "sherpa-onnx-pyannote-segmentation-3-0/model.onnx"),
+        ModelFile(EMBEDDING, [f"{GH}/speaker-recongition-models/{EMBEDDING}"], 29_596_979),
     ]
 
 

@@ -37,7 +37,7 @@ def diarize(samples: np.ndarray, num_speakers: int, on_progress: Callable[[float
         embedding=so.SpeakerEmbeddingExtractorConfig(
             model=str(catalog.path(catalog.EMBEDDING)), num_threads=_threads()),
         clustering=so.FastClusteringConfig(num_clusters=num_speakers if num_speakers > 0 else -1,
-                                           threshold=0.35),
+                                           threshold=catalog.CLUSTER_THRESHOLD),
         min_duration_on=0.3,
         min_duration_off=0.5,
     )
@@ -249,6 +249,8 @@ def transcribe_parakeet(samples: np.ndarray, chunks: list[Turn],
     total = len(samples) / RATE
     wins = [w for w in windows(total, lambda a, b: _quietest(samples, a, b))
             if not chunks or any(c.end > w[0] and c.start < w[1] for c in chunks)]
+    g = audio.gain(samples)  # Pegelangleich wie in der App (leise Aufnahmen)
+    g = 1.0 if 0.9 <= g <= 1.1 else g
     words: list[Word] = []
     segments: list[Segment] = []
     for i, (wa, wb) in enumerate(wins):
@@ -256,7 +258,8 @@ def transcribe_parakeet(samples: np.ndarray, chunks: list[Turn],
         b = min(max(int(wb * RATE), a), len(samples))
         if b - a >= RATE // 4:
             st = rec.create_stream()
-            st.accept_waveform(RATE, samples[a:b])
+            piece = samples[a:b] if g == 1.0 else np.clip(samples[a:b] * g, -1, 1).astype(np.float32)
+            st.accept_waveform(RATE, piece)
             rec.decode_stream(st)
             r = st.result
             words += tokens_to_words(list(r.tokens), list(r.timestamps),
