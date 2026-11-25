@@ -63,7 +63,17 @@ _WHISPER_SIZES = {"turbo": (674_000_000, 361_000_000), "small": (112_000_000, 26
                   "base": (29_000_000, 130_000_000)}
 
 
+PARAKEET_ARCHIVE = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+_PARAKEET_SIZES = {"encoder.int8.onnx": 652_000_000, "decoder.int8.onnx": 11_800_000,
+                   "joiner.int8.onnx": 6_400_000, "tokens.txt": 94_000}
+
+
 def whisper_files(prefix: str) -> list[ModelFile]:
+    """Dateien der Spracherkennung (Name historisch: Whisper-Präfix oder "parakeet")."""
+    if prefix == "parakeet":
+        arch = f"{GH}/asr-models/{PARAKEET_ARCHIVE}.tar.bz2"
+        return [ModelFile(f"parakeet-{part}", [f"{MIRROR}/parakeet-{part}", arch], size,
+                          f"{PARAKEET_ARCHIVE}/{part}") for part, size in _PARAKEET_SIZES.items()]
     enc, dec = _WHISPER_SIZES[prefix]
     arch = f"{GH}/asr-models/sherpa-onnx-whisper-{prefix}.tar.bz2"
     out = []
@@ -76,22 +86,22 @@ def whisper_files(prefix: str) -> list[ModelFile]:
 
 SETS = [
     ModelSet("ultra", "Höchste Qualität",
-             "Whisper large-v3-turbo und Qwen3 8B. Für PCs mit eigener Grafikkarte (ab 8 GB).", 13.0, "turbo",
+             "Parakeet-Spracherkennung und Qwen3 8B. Für PCs mit eigener Grafikkarte (ab 8 GB).", 13.0, "parakeet",
              ModelFile("Qwen3-8B-Q4_K_M.gguf",
                        [f"{HF}/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf"], 5_027_783_488),
              16384, no_think=True),
     ModelSet("premium", "Sehr gute Qualität",
-             "Whisper large-v3-turbo und Qwen3 4B. Schnell und sehr genau, für PCs ab 8 GB Arbeitsspeicher.", 6.5, "turbo",
+             "Parakeet-Spracherkennung und Qwen3 4B. Schnell und sehr genau, für PCs ab 8 GB Arbeitsspeicher.", 6.5, "parakeet",
              ModelFile("Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
                        [f"{HF}/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"],
                        2_497_280_000), 16384),
     ModelSet("standard", "Gute Qualität",
-             "Whisper small und Qwen2.5 3B. Für ältere PCs.", 0.0, "small",
+             "Parakeet-Spracherkennung und Qwen2.5 3B. Für ältere PCs.", 0.0, "parakeet",
              ModelFile("qwen2.5-3b-instruct-q4_k_m.gguf",
                        [f"{HF}/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf"],
                        2_104_932_768), 8192),
     # Nur für automatische Tests (klein und schnell)
-    ModelSet("kompakt", "Kompakt (Test)", "Whisper base und Qwen2.5 1.5B.", -1.0, "base",
+    ModelSet("kompakt", "Kompakt (Test)", "Parakeet-Spracherkennung und Qwen2.5 1.5B.", -1.0, "parakeet",
              ModelFile("qwen2.5-1.5b-instruct-q4_k_m.gguf",
                        [f"{HF}/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"],
                        1_117_320_736), 8192),
@@ -180,6 +190,9 @@ class Downloader:
             self.total_bytes = sum(f.size for f in files)
             self.done_bytes = 0
             for i, f in enumerate(files):
+                if path(f.name).exists():      # schon aus einem gemeinsamen Archiv entpackt
+                    self.done_bytes += f.size
+                    continue
                 self.status = f"Lade {f.name} ({i + 1}/{len(files)}) …"
                 self._fetch(f)
                 if self.cancel:

@@ -1,7 +1,6 @@
 """Sprechererkennung und Transkription mit sherpa-onnx (Port von engine/Transcriber.kt)."""
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass, replace
 from typing import Callable
@@ -124,8 +123,149 @@ class Recognizer:
         return s.result.text
 
 
+# ------------------------------------------------------------------ Parakeet (Port von TokenAlign.kt)
+
+@dataclass
+class Word:
+    text: str
+    start: float
+    end: float
+
+
+def tokens_to_words(tokens, timestamps, durations, offset: float) -> list[Word]:
+    """Teilwörter zu Wörtern; führendes Leerzeichen (oder „▁“) beginnt ein neues Wort."""
+    out: list[Word] = []
+    text, start, end = "", 0.0, 0.0
+
+    def flush():
+        t = text.strip()
+        if t:
+            out.append(Word(t, start, end))
+
+    for i, tok in enumerate(tokens):
+        raw = tok.replace("▁", " ")
+        if not raw.strip() or i >= len(timestamps):
+            continue
+        ts = offset + float(timestamps[i])
+        dur = float(durations[i]) if durations is not None and i < len(durations) and durations[i] > 0 else 0.08
+        new_word = raw.startswith(" ") or not text
+        if new_word:
+            flush()
+            text, start = "", ts
+        text += raw.lstrip() if new_word else raw
+        end = ts + dur
+    flush()
+    return out
+
+
+def speaker_at(t: float, turns: list[Turn]) -> int:
+    if not turns:
+        return 0
+    for x in turns:
+        if x.start <= t <= x.end:
+            return x.speaker
+    return min(turns, key=lambda x: min(abs(t - x.start), abs(t - x.end))).speaker
+
+
+def _join(ws: list[Word]) -> str:
+    return re.sub(r" ([.,!?;:])", r"\1", " ".join(w.text for w in ws)).strip()
+
+
+def words_to_segments(words: list[Word], turns: list[Turn], max_gap: float = 2.0,
+                      renumber: bool = True) -> list[Segment]:
+    remap: dict[int, int] = {}
+    out: list[Segment] = []
+    cur: list[Word] = []
+    cur_spk = -1
+
+    def flush():
+        if cur:
+            sid = remap.setdefault(cur_spk, len(remap)) if renumber else cur_spk
+            out.append(Segment(sid, cur[0].start, cur[-1].end, _join(cur)))
+
+    for w in words:
+        spk = speaker_at((w.start + w.end) / 2, turns)
+        last = cur[-1] if cur else None
+        sentence_end = last is not None and last.text[-1] in ".?!"
+        if last is not None and (spk != cur_spk or (w.start - last.end > max_gap and sentence_end)):
+            flush()
+            cur = []
+        if not cur:
+            cur_spk = spk
+        cur.append(w)
+    flush()
+    return _merge_tiny(out)
+
+
+def _merge_tiny(segs: list[Segment]) -> list[Segment]:
+    """Einzelne Wörter, die die Sprechererkennung einem anderen Sprecher zuschlägt, dem Umfeld zuordnen."""
+    if len(segs) < 3:
+        return segs
+    out: list[Segment] = []
+    i = 0
+    while i < len(segs):
+        s, prev = segs[i], (out[-1] if out else None)
+        nxt = segs[i + 1] if i + 1 < len(segs) else None
+        if (prev and nxt and len(s.text.split(" ")) <= 1 and prev.speaker_id == nxt.speaker_id
+                and s.end - s.start < 1.0):
+            out[-1] = Segment(prev.speaker_id, prev.start, nxt.end, prev.text + " " + s.text + " " + nxt.text)
+            i += 2
+            continue
+        out.append(s)
+        i += 1
+    return out
+
+
+def windows(total: float, quietest: Callable[[float, float], float], min_len: float = 15.0,
+            max_len: float = 25.0) -> list[tuple[float, float]]:
+    out, start = [], 0.0
+    while total - start > max_len:
+        cut = min(max(quietest(start + min_len, start + max_len), start + min_len), start + max_len)
+        out.append((start, cut))
+        start = cut
+    if total - start > 0.05:
+        out.append((start, total))
+    return out
+
+
+def transcribe_parakeet(samples: np.ndarray, chunks: list[Turn],
+                        on_progress: Callable[[int, int, list[Segment]], bool]) -> list[Segment]:
+    """Fenster bis 25 s am Stück erkennen, jedes Wort über seinen Zeitstempel dem Sprecher zuordnen."""
+    import sherpa_onnx as so
+    rec = so.OfflineRecognizer.from_transducer(
+        encoder=str(catalog.path("parakeet-encoder.int8.onnx")),
+        decoder=str(catalog.path("parakeet-decoder.int8.onnx")),
+        joiner=str(catalog.path("parakeet-joiner.int8.onnx")),
+        tokens=str(catalog.path("parakeet-tokens.txt")),
+        num_threads=_threads(), decoding_method="greedy_search", model_type="nemo_transducer",
+    )
+    total = len(samples) / RATE
+    wins = [w for w in windows(total, lambda a, b: _quietest(samples, a, b))
+            if not chunks or any(c.end > w[0] and c.start < w[1] for c in chunks)]
+    words: list[Word] = []
+    segments: list[Segment] = []
+    for i, (wa, wb) in enumerate(wins):
+        a = min(max(int(wa * RATE), 0), len(samples))
+        b = min(max(int(wb * RATE), a), len(samples))
+        if b - a >= RATE // 4:
+            st = rec.create_stream()
+            st.accept_waveform(RATE, samples[a:b])
+            rec.decode_stream(st)
+            r = st.result
+            words += tokens_to_words(list(r.tokens), list(r.timestamps),
+                                     list(getattr(r, "durations", []) or []) or None, wa)
+        segments = [Segment(x.speaker_id, x.start, x.end, clean(x.text))
+                    for x in words_to_segments(words, chunks, renumber=False)]
+        segments = [x for x in segments if x.text]
+        if not on_progress(i + 1, len(wins), segments):
+            break
+    return segments
+
+
 def transcribe(samples: np.ndarray, chunks: list[Turn], whisper_prefix: str, language: str,
                on_progress: Callable[[int, int, list[Segment]], bool]) -> list[Segment]:
+    if whisper_prefix == "parakeet":
+        return transcribe_parakeet(samples, chunks, on_progress)
     rec = Recognizer(whisper_prefix, language)
     segments: list[Segment] = []
     for i, c in enumerate(chunks):
