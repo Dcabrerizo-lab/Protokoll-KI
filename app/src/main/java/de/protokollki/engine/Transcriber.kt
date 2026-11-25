@@ -10,6 +10,7 @@ import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationModelConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationPyannoteModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig
 import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
+import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
 import de.protokollki.data.Segment
 import kotlin.math.max
@@ -217,6 +218,7 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
         val recognizer = OfflineRecognizer(config = config)
         val words = mutableListOf<TokenAlign.Word>()
         var segments: List<Segment> = emptyList()
+        var stopped = false
         try {
             for ((i, w) in windows.withIndex()) {
                 val a = (w.first * sampleRate).toInt().coerceIn(0, samples.size)
@@ -237,10 +239,44 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
                 segments = TokenAlign.segments(words, chunks, renumber = false)
                     .map { it.copy(text = TextCleanup.clean(it.text)) }
                     .filter { it.text.isNotEmpty() }
-                if (!onProgress(i + 1, windows.size, segments)) break
+                if (!onProgress(i + 1, windows.size, segments)) { stopped = true; break }
             }
         } finally {
             recognizer.release()
+        }
+        // Nachclustering: jeder Satz zum ähnlichsten Sprecher (behebt Verwechslung ähnlicher Stimmen)
+        if (!stopped && words.isNotEmpty() && chunks.map { it.speaker }.distinct().size >= 2) {
+            runCatching {
+                val extractor = SpeakerEmbeddingExtractor(
+                    config = SpeakerEmbeddingExtractorConfig(
+                        model = ModelManager.file(ModelCatalog.EMBEDDING).absolutePath,
+                        numThreads = threads,
+                    )
+                )
+                try {
+                    val spk = TokenAlign.refineSpeakers(words, chunks, embed = { from, to ->
+                        val a = (from * sampleRate).toInt().coerceIn(0, samples.size)
+                        val b = (to * sampleRate).toInt().coerceIn(a, samples.size)
+                        if (b - a < sampleRate) null else {
+                            val piece = samples.copyOfRange(a, b)
+                            if (gain != 1f) for (k in piece.indices) piece[k] = (piece[k] * gain).coerceIn(-1f, 1f)
+                            val stream = extractor.createStream()
+                            try {
+                                stream.acceptWaveform(piece, sampleRate)
+                                stream.inputFinished()
+                                extractor.compute(stream)
+                            } finally {
+                                stream.release()
+                            }
+                        }
+                    })
+                    segments = TokenAlign.segments(words, chunks, renumber = false, speakers = spk)
+                        .map { it.copy(text = TextCleanup.clean(it.text)) }
+                        .filter { it.text.isNotEmpty() }
+                } finally {
+                    extractor.release()
+                }
+            }.onFailure { android.util.Log.w("ProtokollKI", "Nachclustering übersprungen: $it") }
         }
         return segments
     }
