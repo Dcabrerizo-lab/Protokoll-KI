@@ -154,7 +154,7 @@ class ProcessingService : LifecycleService() {
         }
         MeetingRepository.update(id) { it.copy(speakers = speakers, segments = emptyList()) }
 
-        val vocab = de.protokollki.engine.Vocabulary.terms()
+        val vocab = (participantTerms(meeting.participants) + de.protokollki.engine.Vocabulary.terms()).distinct()
         t0 = System.currentTimeMillis()
         val raw = transcriber.transcribe(samples, chunks) { done, total, partial ->
             MeetingRepository.update(id, persist = false) {
@@ -180,6 +180,13 @@ class ProcessingService : LifecycleService() {
         if (segments.isEmpty()) throw IllegalStateException("In der Aufnahme wurde keine Sprache erkannt.")
     }
 
+    /** „Frau Dr. Schmidt“ → „Schmidt“; „Anna Becker“ → „Anna Becker“, „Becker“ (für die Schreibkorrektur). */
+    private fun participantTerms(names: List<String>): List<String> = names.flatMap { n ->
+        val core = n.split(' ').filterNot { it.trimEnd('.').lowercase() in setOf("frau", "herr", "dr", "prof") }
+            .joinToString(" ").trim()
+        if (core.isEmpty()) emptyList() else listOf(core) + core.split(' ').drop(1).filter { it.length >= 4 }
+    }.distinct()
+
     private fun summarize(id: String, set: de.protokollki.engine.ModelSet) {
         val meeting = MeetingRepository.get(id) ?: return
         if (meeting.segments.isEmpty()) return
@@ -204,7 +211,7 @@ class ProcessingService : LifecycleService() {
                 agenda = meeting.agenda,
                 openTasks = openTasks,
                 template = meeting.template,
-                vocabulary = de.protokollki.engine.Vocabulary.terms(),
+                vocabulary = (participantTerms(meeting.participants) + de.protokollki.engine.Vocabulary.terms()).distinct(),
             ) { f, text ->
                 progress(id, MeetingStatus.SUMMARIZING, f, text)
                 !cancelled.get()

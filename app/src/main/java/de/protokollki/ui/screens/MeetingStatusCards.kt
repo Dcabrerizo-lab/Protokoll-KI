@@ -47,6 +47,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -139,6 +141,13 @@ private fun ReadyCard(
 ) {
     val cs = MaterialTheme.colorScheme
     var count by remember(m.id) { mutableIntStateOf(m.expectedSpeakers) }
+    var names by remember(m.id) { mutableStateOf(m.participants.joinToString(", ")) }
+    // Namen vorab: werden richtig geschrieben und helfen, Aufgaben der richtigen Person zuzuordnen
+    val start: () -> Unit = {
+        val list = names.split(',', ';', '\n').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        de.protokollki.data.MeetingRepository.update(m.id) { it.copy(participants = list) }
+        onProcess(count)
+    }
     StatusCardShell(modifier, cs.surfaceContainerLow, cs.outlineVariant) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -169,10 +178,21 @@ private fun ReadyCard(
             }
             Spacer(Modifier.height(6.dp))
             SpeakerCountSelector(value = count, onChange = { count = it })
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = names,
+                onValueChange = { names = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Namen der Teilnehmenden (optional)") },
+                placeholder = { Text("z. B. Frau Schmidt, Herr Yilmaz") },
+                supportingText = { Text("Mit Komma trennen. Verbessert Schreibweise und Zuordnung der Aufgaben.") },
+                singleLine = false,
+                maxLines = 3,
+            )
+            Spacer(Modifier.height(12.dp))
             if (modelsInstalled) {
                 Button(
-                    onClick = { onProcess(count) },
+                    onClick = start,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(16.dp),
                 ) {
