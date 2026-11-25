@@ -280,6 +280,7 @@ class ProcessingService : LifecycleService() {
                 openTasks = openTasks,
                 template = meeting.template,
                 vocabulary = (participantTerms(meeting.participants) + de.protokollki.engine.Vocabulary.terms()).distinct(),
+                participants = meeting.participants,
             ) { f, text ->
                 progress(id, MeetingStatus.SUMMARIZING, f, text)
                 !cancelled.get()

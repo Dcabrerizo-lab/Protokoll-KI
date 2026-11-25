@@ -65,11 +65,12 @@ class ProtocolGeneratorTest {
     @Test
     fun verbatimModeOnlyExtractsTasks() {
         val model = FakeModel { _, _ ->
-            """{"aufgaben": [{"aufgabe": "X erledigen [1]", "verantwortlich": "offen", "frist": "morgen"}], "erledigte_aufgaben": [], "sensible_daten": []}"""
+            """{"aufgaben": [{"aufgabe": "Liste schreiben [1]", "verantwortlich": "offen", "frist": "Freitag"}, {"aufgabe": "Bericht senden [1]", "verantwortlich": "offen", "frist": "morgen"}], "erledigte_aufgaben": [], "sensible_daten": []}"""
         }
         val r = ProtocolGenerator(model).generate("T", monday, segments, speakers, wantSummary = false) { _, _ -> true }
         assertTrue(r.summary.isEmpty)
-        assertEquals("Di., 24.11.2026", r.tasks.single().due)
+        assertEquals("Fr., 27.11.2026", r.tasks[0].due)
+        assertEquals("offen", r.tasks[1].due)          // "morgen" fällt im Gespräch nicht: nicht erfinden
         assertTrue(model.prompts[0].contains("immer leere Liste"))
     }
 
@@ -142,12 +143,28 @@ class ProtocolGeneratorTest {
         assertTrue(noTasks != summaryJson)
         val model = FakeModel { _, grammar ->
             if (grammar!!.contains("zusammenfassung")) noTasks
-            else """{"aufgaben": [{"aufgabe": "Drei Angebote einholen [0]", "verantwortlich": "Frau Becker", "frist": "Freitag"}], "erledigte_aufgaben": [], "sensible_daten": []}"""
+            else """{"aufgaben": [{"aufgabe": "Schlüssel abgeben [0]", "verantwortlich": "Herr Wagner", "frist": "offen"}], "erledigte_aufgaben": [], "sensible_daten": []}"""
         }
-        val r = ProtocolGenerator(model).generate("Team", monday, segments, speakers, wantSummary = true) { _, _ -> true }
+        // Keine erkennbaren Zusagen im Transkript: eigener Aufgaben-Durchgang
+        val plain = listOf(Segment(0, 0f, 3f, "Der Schlüssel liegt noch im Büro."), Segment(1, 3f, 5f, "Das sollte sich jemand ansehen."))
+        val r = ProtocolGenerator(model).generate("Team", monday, plain, speakers, wantSummary = true) { _, _ -> true }
         assertEquals(2, model.prompts.size)
         assertEquals("Kurz.", r.summary.overview)
-        assertEquals(listOf("Drei Angebote einholen"), r.tasks.map { it.text })
+        assertEquals(listOf("Schlüssel abgeben"), r.tasks.map { it.text })
+    }
+
+    @Test
+    fun missedCommitmentBecomesTaskWithoutExtraPass() {
+        val noTasks = summaryJson.replace(
+            """[{"aufgabe": "Drei Angebote einholen [0]", "verantwortlich": "Frau Becker", "frist": "Freitag"}]""", "[]")
+        val model = FakeModel { _, _ -> noTasks }
+        val r = ProtocolGenerator(model).generate("Team", monday, segments, speakers, wantSummary = true) { _, _ -> true }
+        assertEquals(1, model.prompts.size)
+        val t = r.tasks.single()
+        assertEquals("Bis Freitag drei Angebote einholen", t.text)
+        assertEquals("Frau Becker", t.owner)
+        assertEquals("Fr., 27.11.2026", t.due)
+        assertEquals(0, t.ref)
     }
 
     @Test
@@ -217,5 +234,62 @@ class ProtocolGeneratorTest {
         val short = ProtocolGenerator.shortenEvenly(text, 0.5)
         assertTrue(short.length < text.length * 0.6)
         (1..3).forEach { assertTrue(short.contains("Notizen zu Teil $it:")) }
+    }
+
+    @Test
+    fun rulesCompleteSmallModelOutput() {
+        // Kleine Modelle: Sprecherbezeichnung als Verantwortliche, Abstimmung ohne Ergebnis, nichts erledigt
+        val segs = listOf(
+            Segment(0, 0f, 3f, "Zum Ausflug: Wir stimmen ab: Ausflug in den Zoo im Mai. Wer ist dafür? Sechs. Dagegen? Keiner. Der Antrag ist angenommen."),
+            Segment(1, 3f, 5f, "Ich kümmere mich um die Busreservierung, bis Ende April."),
+            Segment(0, 5f, 8f, "Danke, Herr Okafor. Die Gästeliste liegt übrigens vor, das ist erledigt."),
+        )
+        val spk = listOf(Speaker(0, "Person 1"), Speaker(1, "Person 2"))
+        val answer = """{"zusammenfassung": "Ausflug geplant.", "themen": [{"titel": "Ausflug", "punkte": ["Zoo im Mai. [0]"]}],
+            "beschluesse": ["Ausflug in den Zoo im Mai. [0]"], "offene_punkte": [],
+            "aufgaben": [{"aufgabe": "Bus reservieren [1]", "verantwortlich": "Person 2", "frist": "offen"}],
+            "erledigte_aufgaben": [], "sensible_daten": []}"""
+        val model = FakeModel { _, _ -> answer }
+        val r = ProtocolGenerator(model).generate("Verein", monday, segs, spk, wantSummary = true,
+            openTasks = listOf(ProtocolGenerator.OpenTask("A1", "t1", "m0", "Gästeliste erstellen", "Herr Okafor"),
+                ProtocolGenerator.OpenTask("A2", "t2", "m0", "Kasse prüfen", "Frau Wolf"))) { _, _ -> true }
+        assertEquals(1, model.prompts.size)                                     // keine zusätzliche LLM-Runde
+        assertTrue(model.prompts[0].contains("[1] Herr Okafor: Ich kümmere mich"))  // Name aus "Danke, Herr Okafor"
+        assertEquals("Herr Okafor", r.tasks.single().owner)
+        assertEquals("Fr., 30.04.2027", r.tasks.single().due)                    // Frist aus dem Beleg
+        assertEquals(listOf("Ausflug in den Zoo im Mai – Abstimmung: 6 Ja, 0 Nein, angenommen."), r.summary.decisions)
+        assertEquals(listOf("t1"), r.completed.map { it.taskId })
+    }
+
+    @Test
+    fun participantsReachHeaderAndAreNeverSensitive() {
+        val model = FakeModel { _, _ -> summaryJson.replace("\"Frau Schulz\"", "\"Herr Wagner\"") }
+        val r = ProtocolGenerator(model).generate("Team", monday, segments, listOf(Speaker(0, "Person 1"), Speaker(1, "Person 2")),
+            wantSummary = true, participants = listOf("Frau Becker", "Herr Wagner")) { _, _ -> true }
+        assertTrue(model.prompts.single().contains("Teilnehmende laut Einladung: Frau Becker, Herr Wagner"))
+        assertTrue(r.sensitiveTerms.toString(), r.sensitiveTerms.none { it.contains("Wagner") || it.contains("Becker") })
+    }
+
+    @Test
+    fun staffDoingTasksAreNotClients() {
+        val segs = listOf(
+            Segment(0, 0f, 3f, "Fallbesprechung Frau Hoffmann, Pflegegrad drei."),
+            Segment(1, 3f, 5f, "Frau Wolf fordert die Verordnung an, Herr Neumann übernimmt das Assessment."),
+        )
+        assertEquals(listOf("Hoffmann"), ProtocolGenerator.addressedClients(segs, emptyList()))
+    }
+
+    @Test
+    fun speakerPrefixIsStrippedFromTaskText() {
+        val raw = """{"aufgaben":[{"aufgabe":"Person 2: Kontakt zum Kundendienst aufnehmen [1]","verantwortlich":"Person 2","frist":"offen"},
+            {"aufgabe":"Frau Kaiser: lädt alle ein [0]","verantwortlich":"Frau Kaiser","frist":"offen"}]}"""
+        val tasks = ProtocolGenerator.parseTasks(raw, 5)
+        assertEquals(listOf("Kontakt zum Kundendienst aufnehmen", "Lädt alle ein"), tasks.map { it.text })
+    }
+
+    @Test
+    fun pastIsNoDeadline() {
+        val segs = listOf(Segment(0, 0f, 2f, "Ich habe die Werkstatt gestern angerufen."))
+        assertEquals("offen", ProtocolGenerator.checkDue(de.protokollki.data.TaskItem("Werkstatt anrufen", "offen", "gestern", ref = 0), segs, java.time.LocalDate.of(2026, 11, 23)))
     }
 }
