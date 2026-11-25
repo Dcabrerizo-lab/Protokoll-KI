@@ -158,9 +158,7 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
                 if (b - a >= sampleRate / 4) {
                     val stream = recognizer.createStream()
                     try {
-                        val piece = samples.copyOfRange(a, b)
-                        if (gain != 1f) for (k in piece.indices) piece[k] = (piece[k] * gain).coerceIn(-1f, 1f)
-                        stream.acceptWaveform(piece, sampleRate)
+                        stream.acceptWaveform(samples.copyOfRange(a, b), sampleRate)
                         recognizer.decode(stream)
                         val text = TextCleanup.clean(recognizer.getResult(stream).text)
                         if (text.isNotEmpty() && !TextCleanup.isHallucination(text, b - a)) {
@@ -226,7 +224,9 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
                 if (b - a >= sampleRate / 4) {
                     val stream = recognizer.createStream()
                     try {
-                        stream.acceptWaveform(samples.copyOfRange(a, b), sampleRate)
+                        val piece = samples.copyOfRange(a, b)
+                        if (gain != 1f) for (k in piece.indices) piece[k] = (piece[k] * gain).coerceIn(-1f, 1f)
+                        stream.acceptWaveform(piece, sampleRate)
                         recognizer.decode(stream)
                         val r = recognizer.getResult(stream)
                         words += TokenAlign.words(r.tokens, r.timestamps, r.durations, w.first)
