@@ -158,7 +158,9 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
                 if (b - a >= sampleRate / 4) {
                     val stream = recognizer.createStream()
                     try {
-                        stream.acceptWaveform(samples.copyOfRange(a, b), sampleRate)
+                        val piece = samples.copyOfRange(a, b)
+                        if (gain != 1f) for (k in piece.indices) piece[k] = (piece[k] * gain).coerceIn(-1f, 1f)
+                        stream.acceptWaveform(piece, sampleRate)
                         recognizer.decode(stream)
                         val text = TextCleanup.clean(recognizer.getResult(stream).text)
                         if (text.isNotEmpty() && !TextCleanup.isHallucination(text, b - a)) {
@@ -210,6 +212,10 @@ class Transcriber(private val set: ModelSet, private val language: String = "de"
         // Nur Fenster mit Sprache (laut Sprechererkennung) verarbeiten
         val windows = TokenAlign.windows(totalSec) { a, b -> quietestPoint(samples, a, b) }
             .filter { (a, b) -> chunks.isEmpty() || chunks.any { it.end > a && it.start < b } }
+        // Pegelangleich wie bei der Sprechererkennung: leise Aufnahmen (Fernmikrofon) ergaben sonst fast
+        // nur Fehler oder leeren Text (Messung: 91 % → 73 % Wortfehler bei -35 dBFS). Je Fenster, damit
+        // bei langen Aufnahmen keine zweite Kopie der ganzen Aufnahme im Speicher liegt.
+        val gain = AudioLevel.gain(samples).let { if (it in 0.9f..1.1f) 1f else it }
         val recognizer = OfflineRecognizer(config = config)
         val words = mutableListOf<TokenAlign.Word>()
         var segments: List<Segment> = emptyList()
