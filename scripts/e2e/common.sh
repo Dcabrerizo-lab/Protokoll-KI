@@ -116,12 +116,18 @@ tap_text() {
   xy=$(ui_dump | python3 -c '
 import re, sys
 want = sys.argv[1]
+nodes = []
 for m in re.finditer(r"<node [^>]*>", sys.stdin.read()):
     n = m.group(0)
     t = re.search(r" text=\"([^\"]*)\"", n); d = re.search(r" content-desc=\"([^\"]*)\"", n)
     b = re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", n)
-    if b and ((t and want in t.group(1)) or (d and want in d.group(1))):
-        x1, y1, x2, y2 = map(int, b.groups()); print((x1 + x2) // 2, (y1 + y2) // 2); break
+    if b: nodes.append(((t.group(1) if t else ""), (d.group(1) if d else ""), tuple(map(int, b.groups()))))
+# Erst exakter Text (z. B. Knopf), dann Teiltext (nicht die Fehlermeldung, die den Knopftext zitiert)
+for exact in (True, False):
+    hit = next((bb for tt, dd, bb in nodes
+                if ((tt == want or dd == want) if exact else (want in tt or want in dd))), None)
+    if hit:
+        x1, y1, x2, y2 = hit; print((x1 + x2) // 2, (y1 + y2) // 2); break
 ' "$1")
   [ -n "$xy" ] || return 1
   adb shell input tap $xy
@@ -138,3 +144,15 @@ fill_disk() {
   info "Speicher gefüllt: frei jetzt $(( $(data_free_kb) / 1024 )) MB"
 }
 free_disk() { adb shell "rm -f /data/local/tmp/fill*"; }
+# Wie tap_text, scrollt aber bis zu 4-mal nach unten, falls das Element (noch) nicht sichtbar ist
+tap_scroll() {
+  local wh w h
+  tap_text "$1" && return 0
+  wh=$(adb shell wm size 2>/dev/null | tr -d '\r' | awk -F'[ x]' '/size/{print $(NF-1)" "$NF}' | tail -1)
+  w=${wh% *}; h=${wh#* }; [ -z "$w" ] && { w=1080; h=1920; }
+  for _ in 1 2 3 4; do
+    adb shell input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 3)) 300; sleep 1
+    tap_text "$1" && return 0
+  done
+  return 1
+}

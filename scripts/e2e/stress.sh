@@ -50,7 +50,7 @@ import_file() { # $1 Szenario-WAV, $2 Name im App-Ordner, $3 auto_process (true/
 retry_ui() {
   local id=$1
   for _ in 1 2 3; do
-    screen_on; tap_text "Erneut versuchen"; sleep 6
+    screen_on; tap_scroll "Erneut versuchen"; sleep 6
     [ "$(status_of "$id")" != ERROR ] && return 0
     info "Erneut versuchen hat nicht gegriffen, Oberfläche: $(ui_texts)"
   done
@@ -173,7 +173,7 @@ sleep 4; shot stress-akku
 ui_has "Akku bei 5" || info "Oberfläche: $(ui_texts)"
 if ui_has "Akku bei 5"; then pass "[Akku] Warnung vor der Verarbeitung sichtbar (5 %, ohne Ladegerät)"
 else fail "[Akku] keine Akku-Warnung bei 5 % ohne Ladegerät"; fi
-tap_text "Jetzt verarbeiten" || fail "[Akku] Knopf „Jetzt verarbeiten“ nicht gefunden"
+tap_scroll "Jetzt verarbeiten" || fail "[Akku] Knopf „Jetzt verarbeiten“ nicht gefunden"
 sleep 5
 r=$(wait_final "$cid" 900)
 if [ "$r" = DONE ] || [ "$r" = ERROR ] && app_alive; then pass "[Akku] Verarbeitung im Energiesparmodus ohne Absturz ($r)"
