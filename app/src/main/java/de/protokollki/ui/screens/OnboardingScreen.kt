@@ -51,6 +51,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -374,25 +375,16 @@ private fun ModelStep(onFinished: () -> Unit) {
             )
         }
         Spacer(Modifier.height(20.dp))
+        // Ein Klick genügt: das empfohlene Paket ist vorausgewählt, eigene Auswahl nur bei Bedarf
+        var showAll by rememberSaveable { mutableStateOf(ms.set.id != ms.recommended.id) }
         Text(
-            "Empfohlen für Ihr Gerät: ${ms.recommended.label}",
+            if (ms.set.id == ms.recommended.id) "Automatisch gewählt: ${ms.recommended.label} " +
+                "(schnellste Einstellung mit bester Qualität für dieses Gerät)"
+            else "Ausgewählt: ${ms.set.label} (empfohlen wäre ${ms.recommended.label})",
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary,
         )
-        Spacer(Modifier.height(10.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            ModelCatalog.sets.forEach { set ->
-                ModelSetCard(
-                    set = set,
-                    selected = set.id == ms.set.id,
-                    recommended = set.id == ms.recommended.id,
-                    installed = installedMap[set.id] == true,
-                    enabled = !ms.downloading,
-                    onClick = { if (!ms.downloading) ModelManager.selectSet(set.id) },
-                )
-            }
-        }
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(12.dp))
         ModelDownloadPanel(
             state = ms,
             freeBytes = freeBytes,
@@ -400,6 +392,24 @@ private fun ModelStep(onFinished: () -> Unit) {
             onStart = startDownload,
             onCancel = { DownloadService.cancel(context) },
         )
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = { showAll = !showAll }, modifier = Modifier.fillMaxWidth()) {
+            Text(if (showAll) "Paketauswahl ausblenden" else "Anderes Paket wählen (optional)")
+        }
+        if (showAll) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                ModelCatalog.sets.forEach { set ->
+                    ModelSetCard(
+                        set = set,
+                        selected = set.id == ms.set.id,
+                        recommended = set.id == ms.recommended.id,
+                        installed = installedMap[set.id] == true,
+                        enabled = !ms.downloading,
+                        onClick = { if (!ms.downloading) ModelManager.selectSet(set.id) },
+                    )
+                }
+            }
+        }
         if (ms.installed && !ms.downloading) {
             Spacer(Modifier.height(12.dp))
             Button(
