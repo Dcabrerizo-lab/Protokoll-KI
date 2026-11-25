@@ -23,6 +23,18 @@ def _setup_logging() -> None:
     )
     logging.getLogger("fontTools").setLevel(logging.WARNING)
 
+    # Unerwartete Fehler (auch in Hintergrund-Threads) ins Protokoll schreiben, damit sich Abstürze
+    # nachvollziehen lassen. Die Datei bleibt auf dem PC; Inhalte von Besprechungen stehen nicht darin.
+    import threading
+
+    def _hook(exc_type, exc, tb):
+        logging.critical("Unerwarteter Fehler", exc_info=(exc_type, exc, tb))
+
+    sys.excepthook = _hook
+    threading.excepthook = lambda a: logging.critical(
+        "Unerwarteter Fehler im Thread %s", a.thread.name if a.thread else "?",
+        exc_info=(a.exc_type, a.exc_value, a.exc_traceback))
+
 
 def _running_instance():
     from pkpc.paths import app_data

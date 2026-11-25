@@ -13,7 +13,7 @@ import java.util.TimeZone
  * Keine android.*-Abhängigkeiten (per JVM-Unit-Test prüfbar).
  */
 
-internal const val FOOTER_NOTE = "Erstellt mit Protokoll KI – vollständig offline auf dem Gerät verarbeitet."
+internal const val FOOTER_NOTE = "Erstellt mit Protokoll KI (KI-gestützt, vor Weitergabe bitte prüfen) – vollständig offline auf dem Gerät verarbeitet."
 
 internal sealed class Block {
     /** Kopf: Protokollart (z. B. „Ergebnisprotokoll“) + Titel der Besprechung. */

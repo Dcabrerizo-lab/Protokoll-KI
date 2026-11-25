@@ -10,6 +10,7 @@ import de.protokollki.engine.ModelManager
 class ProtokollApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        CrashReporter.install(this)
         AppSettings.init(this)
         MeetingRepository.init(this)
         ModelManager.init(this)

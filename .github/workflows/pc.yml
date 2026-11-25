@@ -7,9 +7,10 @@ on:
   workflow_dispatch:
   push:
     branches: [main, "claude/**"]
-    paths: ["pc/**", ".github/workflows/pc.yml", "app/src/main/java/de/protokollki/engine/ProtocolGenerator.kt"]
+    paths: ["pc/**", ".github/workflows/pc.yml", "app/src/main/java/de/protokollki/engine/ProtocolGenerator.kt",
+            "app/src/main/assets/legal/**"]
   pull_request:
-    paths: ["pc/**", ".github/workflows/pc.yml"]
+    paths: ["pc/**", ".github/workflows/pc.yml", "app/src/main/assets/legal/**"]
 
 permissions:
   contents: write
@@ -111,9 +112,38 @@ jobs:
           c.request("GET", "/api/state", headers={"X-Token": info["token"]}); s = json.loads(c.getresponse().read())
           assert "meetings" in s
           c.request("GET", "/api/state"); assert c.getresponse().status == 403   # ohne Schlüssel kein Zugriff
+          for doc in ("datenschutz", "lizenzen", "impressum"):          # Rechtstexte im Paket enthalten
+              c.request("GET", "/api/legal/" + doc, headers={"X-Token": info["token"]})
+              t = json.loads(c.getresponse().read())["text"]
+              assert len(t) > 100 and "BITTE AUSFÜLLEN" not in t, doc
           print("Oberfläche OK, Version", s["version"])
           EOF
           taskkill //F //IM ProtokollKI.exe || true
+
+      # Windows-Codesignatur (optional): nur wenn die Azure-Trusted-Signing-Secrets gesetzt sind.
+      # Ohne Signatur zeigt Windows SmartScreen beim Installieren eine Warnung. Anleitung: docs/vertrieb/signatur.md
+      - name: Signatur verfügbar?
+        id: sig
+        shell: bash
+        env:
+          AZ_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: echo "on=$([ -n "$AZ_ID" ] && echo 1 || echo 0)" >> "$GITHUB_OUTPUT"
+
+      - name: Programm signieren
+        if: steps.sig.outputs.on == '1'
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE }}
+          files-folder: pc/dist/ProtokollKI
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
 
       - name: Installer bauen (Inno Setup)
         working-directory: pc
@@ -121,6 +151,21 @@ jobs:
           export PK_VERSION="1.0.${GITHUB_RUN_NUMBER}"
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" installer.iss
           ls -la dist
+
+      - name: Installer signieren
+        if: steps.sig.outputs.on == '1'
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE }}
+          files: ${{ github.workspace }}/pc/dist/ProtokollKI-PC-Setup.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
 
       - uses: actions/upload-artifact@v4
         with:

@@ -1,0 +1,102 @@
+name: Verkaufsversion bauen (Play Store)
+
+# Baut die App mit dem geheimen Verkaufs-Schlüssel:
+#  - ProtokollKI.aab  zum Hochladen in die Google Play Console
+#  - ProtokollKI-store.apk  für den Direktverkauf außerhalb des Play Store
+# Die Test-APK (Release "latest") und die Demo-APK (Release "demo") bleiben unverändert.
+# Einrichtung der Secrets: docs/vertrieb/signatur.md
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  SHERPA_VERSION: "2.0.3"
+
+jobs:
+  store:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Rechtstexte ausgefüllt?
+        run: |
+          if grep -rn "BITTE AUSFÜLLEN" app/src/main/assets/legal; then
+            echo "::error::Impressum/Datenschutz enthalten noch Platzhalter (app/src/main/assets/legal)"
+            exit 1
+          fi
+          grep -q 'SUPPORT_EMAIL = ""' app/src/main/java/de/protokollki/CrashReporter.kt && \
+            echo "::warning::Keine Support-Adresse für Absturzberichte gesetzt (CrashReporter.SUPPORT_EMAIL)" || true
+
+      - name: Schlüssel vorhanden?
+        env:
+          KS: ${{ secrets.PK_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KS" ]; then
+            echo "::error::GitHub-Secret PK_KEYSTORE_BASE64 fehlt. Anleitung: docs/vertrieb/signatur.md"
+            exit 1
+          fi
+          echo "$KS" | base64 -d > "$RUNNER_TEMP/store.jks"
+          echo "PK_KEYSTORE_FILE=$RUNNER_TEMP/store.jks" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Android NDK und CMake installieren
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.13113456" "cmake;3.31.6" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - name: sherpa-onnx herunterladen
+        run: |
+          mkdir -p app/libs
+          curl -fsSL -o app/libs/sherpa-onnx.aar \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/sherpa-onnx-${SHERPA_VERSION}.aar"
+
+      - name: Unit-Tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Bundle und APK bauen
+        env:
+          PK_KEYSTORE_PASSWORD: ${{ secrets.PK_KEYSTORE_PASSWORD }}
+          PK_KEY_ALIAS: ${{ secrets.PK_KEY_ALIAS }}
+          PK_KEY_PASSWORD: ${{ secrets.PK_KEY_PASSWORD }}
+          PK_STORE_BUILD: "1"
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then export PK_VERSION_NAME="${GITHUB_REF_NAME#v}"; fi
+          ./gradlew --no-daemon bundleRelease assembleRelease
+
+      - name: Signatur prüfen (nicht der öffentliche Test-Schlüssel)
+        run: |
+          mkdir -p out
+          cp app/build/outputs/bundle/release/app-release.aab out/ProtokollKI.aab
+          cp app/build/outputs/apk/release/app-release.apk out/ProtokollKI-store.apk
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --print-certs out/ProtokollKI-store.apk | tee certs.txt
+          TEST=$(keytool -list -v -keystore keystore/protokollki.jks -storepass protokollki | grep 'SHA256:' | head -1 | awk '{print $2}' | tr -d ':' | tr 'A-F' 'a-f')
+          if grep -qi "$TEST" certs.txt; then echo "::error::APK ist mit dem öffentlichen Test-Schlüssel signiert"; exit 1; fi
+          rm -f "$PK_KEYSTORE_FILE"
+          ls -lh out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ProtokollKI-store
+          path: out/*
+
+      - name: Als Entwurf-Release ablegen (nur bei Versions-Tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/ProtokollKI.aab out/ProtokollKI-store.apk \
+            --draft --title "Protokoll KI $GITHUB_REF_NAME (Verkaufsversion)" \
+            --notes "Signiert mit dem Verkaufs-Schlüssel. AAB für Google Play, APK für den Direktvertrieb."

@@ -282,6 +282,25 @@ private fun FeaturesStep() {
                 )
             }
         }
+        Spacer(Modifier.height(12.dp))
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.RecordVoiceOver, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    "Bitte informieren Sie vor jeder Aufnahme alle Anwesenden und holen Sie ihr Einverständnis ein. " +
+                        "KI-Protokolle können Fehler enthalten: vor der Weitergabe kurz prüfen.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Spacer(Modifier.height(32.dp))
     }
 }
