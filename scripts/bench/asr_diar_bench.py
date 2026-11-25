@@ -9,12 +9,14 @@ Misst je Szenario (WAV + JSON aus scripts/e2e/scenarios/make_audio.py):
   Wort-Spk    Anteil der erkannten Wörter beim falschen Sprecher nach optimaler Zuordnung
               (Zuordnung wie in der App: planChunks + TokenAlign.speakerAt + mergeTiny)
   DER         Diarisierungsfehler auf 10-ms-Rastern (Verpasst + Fehlalarm + Verwechslung, Collar 0,25 s)
+  Kleinstspr. Versuch: Sprecher mit < 15 s und < 2 % der Redezeit entfernen, Wörter dem nächsten großen Sprecher geben
   Spk         erkannte Sprecher (in den Segmenten, wie check.py zählt) / echte Sprecher
   Zeiten      Diarisierung, ASR (s) und Echtzeitfaktor (Rechenzeit / Audiodauer)
 
-Gleiche Parameter wie die App (Transcriber.kt): Clustering-Schwelle 0,35, minDurationOn 0,3,
+Gleiche Parameter wie die App (Transcriber.kt, seit 6a87791): Segmentierung pyannote fp32 (model.onnx),
+Embedding 3dspeaker CAM++ en voxceleb, Clustering-Schwelle 0,6, minDurationOn 0,3,
 minDurationOff 0,5, Pegelangleich vor der Diarisierung (AudioLevel.kt), ASR in Fenstern 15–25 s,
-geschnitten am leisesten 100-ms-Punkt. Segmentierung: App nutzt model.int8.onnx; mit --seg model.onnx lässt sich die fp32-Variante vergleichen.
+geschnitten am leisesten 100-ms-Punkt. Bis 6a87791: Segmentierung model.int8.onnx + wespeaker resnet34_LM bei 0,35 (mit --seg/--emb vergleichbar).
 Abweichung: ASR-Fenster werden nicht nach Sprache gefiltert
 (damit die ASR für alle Embedding-Modelle nur einmal läuft).
 
@@ -315,19 +317,68 @@ class Asr:
         return words, " ".join(texts), time.perf_counter() - t0
 
 
-def diarize(models, emb_path, thr, x, threads, seg="model.int8.onnx"):
+def diarize(models, emb_path, thr, x, threads, seg="model.onnx", num_clusters=-1):
     cfg = sherpa_onnx.OfflineSpeakerDiarizationConfig(
         segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
             pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
                 model=f"{models}/sherpa-onnx-pyannote-segmentation-3-0/{seg}"),
             num_threads=threads),
         embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=emb_path, num_threads=threads),
-        clustering=sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=thr),
+        clustering=sherpa_onnx.FastClusteringConfig(num_clusters=num_clusters, threshold=thr),
         min_duration_on=0.3, min_duration_off=0.5)
     sd = sherpa_onnx.OfflineSpeakerDiarization(cfg)
     t0 = time.perf_counter()
     res = sd.process(normalize(x)).sort_by_start_time()
     return [(r.start, r.end, r.speaker) for r in res], time.perf_counter() - t0
+
+
+def refine_sentences(x, words, spk, emb_path, threads, iters=3):
+    """Versuch „Nachclustering auf Satzebene“: je Satz (gleicher Sprecher, bis Satzende oder Pause
+    > 0,5 s, mind. 1 s) ein Stimm-Embedding; Sätze werden iterativ dem nächsten Sprecher-Mittelwert
+    (Kosinus) zugeordnet. Sprecherzahl bleibt höchstens gleich. Liefert neue Sprecher je Wort."""
+    ext = sherpa_onnx.SpeakerEmbeddingExtractor(
+        sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=emb_path, num_threads=threads))
+    sents, cur = [], []
+    for i, (w, s_, e_) in enumerate(words):
+        if cur and (spk[i] != spk[cur[-1]] or s_ - words[cur[-1]][2] > 0.5):
+            sents.append(cur)
+            cur = []
+        cur.append(i)
+        if w[-1:] in ".?!":
+            sents.append(cur)
+            cur = []
+    if cur:
+        sents.append(cur)
+    embs, lab = {}, [spk[c[0]] for c in sents]
+    for j, c in enumerate(sents):
+        a_, b_ = words[c[0]][1], words[c[-1]][2]
+        if b_ - a_ < 1.0:
+            continue
+        st = ext.create_stream()
+        st.accept_waveform(SR, x[int(a_ * SR):int(b_ * SR)])
+        st.input_finished()
+        v = np.array(ext.compute(st))
+        embs[j] = (v / max(1e-9, np.linalg.norm(v)), b_ - a_)
+    for _ in range(iters):
+        cent = {}
+        for j, (v, d) in embs.items():
+            cent[lab[j]] = cent.get(lab[j], 0) + v * d
+        if len(cent) < 2:
+            break
+        keys = list(cent)
+        C = np.stack([cent[k] / np.linalg.norm(cent[k]) for k in keys])
+        changed = False
+        for j, (v, _) in embs.items():
+            k = keys[int(np.argmax(C @ v))]
+            changed |= k != lab[j]
+            lab[j] = k
+        if not changed:
+            break
+    out = list(spk)
+    for j, c in enumerate(sents):
+        for i in c:
+            out[i] = lab[j]
+    return out
 
 
 # ----------------------------------------------------------------------------- Ablauf
@@ -344,7 +395,13 @@ def main():
     ap.add_argument("--emb", action="append", default=[],
                     help="Embedding-Modell[:Schwelle[,Schwelle…]] (mehrfach). Standard: App-Modell bei 0,35")
     ap.add_argument("--seg", action="append", default=[],
-                    help="Segmentierungsmodell im pyannote-Ordner (mehrfach): model.int8.onnx (App) oder model.onnx")
+                    help="Segmentierungsmodell im pyannote-Ordner (mehrfach): model.onnx (App, fp32) oder model.int8.onnx")
+    ap.add_argument("--oracle-spk", action="store_true",
+                    help="echte Sprecherzahl vorgeben (wie „Anzahl Personen“ in der App) – obere Schranke")
+    ap.add_argument("--refine", action="store_true",
+                    help="Versuch: Nachclustering auf Satzebene (Embedding je Satz, k-Means-artige Neuzuordnung)")
+    ap.add_argument("--fallback-thr", type=float, default=0,
+                    help="Versuch: findet die Diarisierung nur 1 Sprecher (Aufnahme > 20 s), mit dieser Schwelle wiederholen")
     ap.add_argument("--only", default="", help="nur diese Szenarien (Komma-Liste, Präfix erlaubt)")
     ap.add_argument("--skip", default="stress_marathon,stille,kurz", help="Szenarien auslassen")
     ap.add_argument("--threads", type=int, default=4, help="wie App: min(4, Kerne-2)")
@@ -357,13 +414,13 @@ def main():
     a = ap.parse_args()
 
     embs = []
-    for seg in a.seg or ["model.int8.onnx"]:
-        tag = "" if seg == "model.int8.onnx" else f" +seg {seg.removesuffix('.onnx')}"
-        for spec in a.emb or ["wespeaker_en_voxceleb_resnet34_LM.onnx:0.35"]:
+    for seg in a.seg or ["model.onnx"]:
+        tag = "" if seg == "model.onnx" else f" +seg {seg.removesuffix('.onnx')}"
+        for spec in a.emb or ["3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx:0.6"]:
             path, _, thr = spec.partition(":")
             if not os.path.exists(path):
                 path = f"{a.models}/emb/{path}"
-            for t in (thr or "0.35").split(","):
+            for t in (thr or "0.6").split(","):
                 embs.append((os.path.basename(path).removesuffix(".onnx") + tag, path, float(t), seg))
 
     names = sorted(os.path.basename(p)[:-5] for p in glob.glob(f"{a.scenarios}/*.json"))
@@ -411,7 +468,10 @@ def main():
         else:
             words = []
         for emb_name, emb_path, thr, seg in embs:
-            turns, t_d = diarize(a.models, emb_path, thr, x, a.threads, seg)
+            turns, t_d = diarize(a.models, emb_path, thr, x, a.threads, seg, n_true if a.oracle_spk else -1)
+            if a.fallback_thr and dur > 20 and len({k for *_, k in turns}) <= 1:
+                turns, t2 = diarize(a.models, emb_path, a.fallback_thr, x, a.threads, seg)
+                t_d += t2
             chunks = plan_chunks(turns)
             row = dict(info, emb=emb_name, thr=thr, t_diar=t_d, rtf_diar=t_d / dur,
                        n_raw=len({k for *_, k in turns}), der=der(turns, ref, dur))
@@ -419,11 +479,30 @@ def main():
                 spk = assign_words(words, chunks)
                 row["n_det"] = len(set(spk))
                 row["wspk"] = word_speaker_error(words, spk, ref)
+                # Versuch „Kleinstsprecher“: Sprecher mit < 15 s und < 2 % der Redezeit werden
+                # entfernt, ihre Wörter dem zeitlich nächsten großen Sprecher zugeordnet
+                talk = {}
+                for s_, e_, k in chunks:
+                    talk[k] = talk.get(k, 0) + e_ - s_
+                limit = min(15.0, 0.02 * sum(talk.values()))
+                major = [t for t in chunks if talk[t[2]] >= limit]
+                if major and len(major) < len(chunks):
+                    spk2 = assign_words(words, major)
+                    row["n_major"] = len(set(spk2))
+                    row["wspk_major"] = word_speaker_error(words, spk2, ref)
+                else:
+                    row["n_major"], row["wspk_major"] = row["n_det"], row["wspk"]
+                if a.refine:
+                    t0 = time.perf_counter()
+                    spk3 = refine_sentences(x, words, spk, emb_path, a.threads)
+                    row["t_refine"] = time.perf_counter() - t0
+                    row["n_refine"] = len(set(spk3))
+                    row["wspk_refine"] = word_speaker_error(words, spk3, ref)
             else:
                 row["n_det"] = len({k for *_, k in chunks})
             rows.append(row)
             print(f"[{name}] {emb_name}@{thr}: DER {row['der']:.3f} Wort-Spk {row.get('wspk', float('nan')):.3f} "
-                  f"Spk {row['n_det']}/{n_true} WER {row.get('wer', float('nan')):.3f} "
+                  f"Spk {row['n_det']}/{n_true} (ohne Kleinstsprecher {row.get('n_major', '-')}, Wort-Spk {row.get('wspk_major', float('nan')):.3f}; Nachclustering {row.get('n_refine', '-')}, Wort-Spk {row.get('wspk_refine', float('nan')):.3f}) WER {row.get('wer', float('nan')):.3f} "
                   f"Diar {t_d:.1f}s ASR {row.get('t_asr', 0):.1f}s ({dur:.0f}s Audio)", file=sys.stderr, flush=True)
 
     md = report(rows, embs, a.detail)
@@ -450,8 +529,8 @@ def report(rows, embs, detail):
                      f"{fmt(r['der'], 1, True)} | {r['t_diar']:.1f} ({r['rtf_diar']:.3f}) | "
                      f"{fmt(r.get('t_asr'))} ({fmt(r.get('t_asr', float('nan')) / r['dur'], 3)}) | {kw} |")
     lines.append("\n### Je Embedding-Modell und Schwelle (alle Szenarien)\n")
-    lines.append("| Modell | Schwelle | Ø Wort-Spk-Fehler | Ø DER | Spk exakt | Spk im Bereich | Ø Abw. Spk | Diar gesamt s | RTF Diar | Tempo vs. Basis |")
-    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("| Modell | Schwelle | Ø Wort-Spk-Fehler | Ø DER | Spk exakt | Spk im Bereich | Ø Abw. Spk | Diar gesamt s | RTF Diar | Tempo vs. Basis | Ø Wort-Spk ohne Kleinstspr. | Spk im Bereich ohne Kleinstspr. | Ø Wort-Spk Nachclustering |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     tot_base = sum(r["t_diar"] for r in rows if (r["emb"], r["thr"]) == (base[0], base[2])) or 1
     for e in embs:
         rs = [r for r in rows if (r["emb"], r["thr"]) == (e[0], e[2])]
@@ -465,7 +544,10 @@ def report(rows, embs, detail):
                      f"{sum(r['n_det'] == r['n_true'] for r in rs)}/{len(rs)} | "
                      f"{sum(r['range'][0] <= r['n_det'] <= r['range'][1] for r in rs)}/{len(rs)} | "
                      f"{np.mean([abs(r['n_det'] - r['n_true']) for r in rs]):.2f} | {t:.0f} | {t / d:.3f} | "
-                     f"{tot_base / t:.2f}× |")
+                     f"{tot_base / t:.2f}× | "
+                     f"{fmt(np.mean([r['wspk_major'] for r in rs if 'wspk_major' in r]) if ws else float('nan'), 1, True)} | "
+                     f"{sum(r['range'][0] <= r.get('n_major', r['n_det']) <= r['range'][1] for r in rs)}/{len(rs)} | "
+                     f"{fmt(np.mean([r['wspk_refine'] for r in rs if 'wspk_refine' in r]) if any('wspk_refine' in r for r in rs) else float('nan'), 1, True)} |")
     if detail:
         lines.append("\n### Detail (Wort-Spk-Fehler / DER / Sprecher erkannt-echt)\n")
         keys = [(e[0], e[2]) for e in embs]
