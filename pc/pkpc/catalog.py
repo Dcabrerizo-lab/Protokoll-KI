@@ -100,7 +100,7 @@ SETS = [
              # Apache-2.0; ersetzt Qwen2.5 3B (Qwen Research License, nicht kommerziell nutzbar)
              ModelFile("Qwen3-4B-Instruct-2507-Q3_K_M.gguf",
                        [f"{HF}/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q3_K_M.gguf"],
-                       2_075_000_000), 8192),
+                       2_075_618_400), 8192),
     # Nur für automatische Tests (klein und schnell)
     ModelSet("kompakt", "Kompakt (Test)", "Parakeet-Spracherkennung und Qwen2.5 1.5B.", -1.0, "parakeet",
              ModelFile("qwen2.5-1.5b-instruct-q4_k_m.gguf",

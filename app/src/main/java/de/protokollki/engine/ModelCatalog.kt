@@ -129,7 +129,7 @@ object ModelCatalog {
                 // das unter der Qwen Research License steht und nicht kommerziell genutzt werden darf.
                 url = "$HF/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q3_K_M.gguf",
                 target = "Qwen3-4B-Instruct-2507-Q3_K_M.gguf",
-                bytes = 2_075_000_000,
+                bytes = 2_075_618_400,
             ),
             llmContext = 8192,
         ),
