@@ -6,6 +6,8 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstring>
+#include <cstdio>
 #include <cmath>
 #include <atomic>
 #include <string>
@@ -99,6 +101,35 @@ int decode(Engine &e, const llama_token *tokens, int n, llama_pos pos0, bool log
     return llama_process(e.ctx, LLAMA_PROCESS_TYPE_DECODE, e.batch);
 }
 
+// Anzahl der schnellen Kerne (große und mittlere). Handys haben 2–4 Sparkerne; landet auch nur ein
+// Rechen-Thread darauf, warten alle anderen bei jedem Schritt auf ihn. Erkennung über cpu_capacity
+// (Kernel-Angabe der Rechenleistung), sonst über die Höchstfrequenz. Kerne ab halber Spitzenleistung zählen.
+int fast_cores(int cores) {
+    auto read_num = [](const char *fmt, int cpu) -> long {
+        char path[128];
+        snprintf(path, sizeof(path), fmt, cpu);
+        FILE *f = fopen(path, "r");
+        if (!f) return -1;
+        long v = -1;
+        if (fscanf(f, "%ld", &v) != 1) v = -1;
+        fclose(f);
+        return v;
+    };
+    for (const char *fmt : {"/sys/devices/system/cpu/cpu%d/cpu_capacity",
+                            "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq"}) {
+        std::vector<long> v;
+        for (int c = 0; c < cores; ++c) v.push_back(read_num(fmt, c));
+        const long top = *std::max_element(v.begin(), v.end());
+        if (top <= 0 || std::any_of(v.begin(), v.end(), [](long x) { return x <= 0; })) continue;
+        const bool capacity = fmt[strlen(fmt) - 1] == 'y';
+        // Frequenzen liegen enger beieinander als Rechenleistung (A55 2,0 GHz neben A78 2,4 GHz)
+        const double share = capacity ? 0.5 : 0.85;
+        const int n = (int) std::count_if(v.begin(), v.end(), [&](long x) { return x >= share * top; });
+        if (n >= 2) return n;
+    }
+    return std::max(2, cores / 2);
+}
+
 }  // namespace
 
 extern "C" {
@@ -134,9 +165,12 @@ Java_de_protokollki_engine_LlamaNative_load(JNIEnv *env, jobject, jstring jpath,
     // Erzeugen (Token für Token) ist speichergebunden: 4 Threads auf den großen Kernen sind am
     // schnellsten, mehr Threads landen auf den Sparkernen und bremsen. Einlesen profitiert von mehr.
     const int cores = (int) sysconf(_SC_NPROCESSORS_ONLN);
-    int threads = n_threads > 0 ? n_threads : std::max(2, std::min(4, cores - 2));
+    const int fast_n = std::min(8, fast_cores(cores));
+    int threads = n_threads > 0 ? n_threads : std::max(2, std::min(4, fast_n));
     cp.n_threads = threads;
-    cp.n_threads_batch = n_threads > 0 ? n_threads : std::max(2, std::min(6, cores - 2));
+    cp.n_threads_batch = n_threads > 0 ? n_threads : std::max(2, fast_n);
+    LOGI("PKREPORT kerne=%d von %d schnell, Threads Schreiben %d, Einlesen %d", fast_n, cores, threads,
+         (int) cp.n_threads_batch);
     cp.no_perf = true;
     // Speicher sparen: KV-Cache in 8 Bit (halbiert den größten RAM-Posten nach den Gewichten).
     // Quantisierter V-Cache braucht Flash Attention; klappt das nicht, Rückfall auf 16 Bit.

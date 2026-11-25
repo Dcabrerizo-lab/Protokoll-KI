@@ -63,7 +63,7 @@ for key, label in (("kurz", "Besprechung 69 s"), ("lang", "Lange Besprechung 4,7
             + (f" · Fehlermeldung: {g(key + '.fehler')}" if g(key + ".fehler") not in (None, "", "null") else ""))
 # Zeitmessung je Schritt (App) und je Sprachmodell-Aufruf (nativ), in Reihenfolge des Protokolls
 timing = [m.group(1) + ": " + m.group(2).strip()
-          for m in re.finditer(r"PKREPORT ((?:schritt|llm)\.\d+)=(.*)", logcat)]
+          for m in re.finditer(r"PKREPORT ((?:schritt|llm)\.\d+|kerne)=(.*)", logcat)]
 if timing:
     lines += ["", "<details><summary>Zeiten je Schritt</summary>", ""] + [f"- {t}" for t in timing[:80]] + ["", "</details>"]
 lines.append("")
