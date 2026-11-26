@@ -23,6 +23,8 @@
 namespace {
 
 constexpr int BATCH_SIZE = 512;
+// Höchstens so viele Entwurfs-Tokens je Durchgang (Prompt Lookup); 0 schaltet es ab
+constexpr int LOOKUP_MAX = 4;
 
 struct Engine {
     llama_model *model = nullptr;
@@ -99,6 +101,37 @@ int decode(Engine &e, const llama_token *tokens, int n, llama_pos pos0, bool log
     }
     if (logits_last) llama_batch_ext_set_output_logits(e.batch, n - 1, true);
     return llama_process(e.ctx, LLAMA_PROCESS_TYPE_DECODE, e.batch);
+}
+
+// Wie decode, aber Logits für jede Position (zum Prüfen vorgeschlagener Tokens)
+int decode_all(Engine &e, const llama_token *tokens, int n, llama_pos pos0) {
+    llama_batch_ext_clear(e.batch);
+    for (int i = 0; i < n; ++i) {
+        const int32_t idx = llama_batch_ext_add_token(e.batch, 0, tokens[i]);
+        const llama_pos pos = pos0 + i;
+        llama_batch_ext_set_pos(e.batch, idx, &pos);
+        llama_batch_ext_set_output_logits(e.batch, idx, true);
+    }
+    return llama_process(e.ctx, LLAMA_PROCESS_TYPE_DECODE, e.batch);
+}
+
+// Vorschlag aus dem bisherigen Text: Protokolle übernehmen viele Wortfolgen (Namen, Begriffe, Sätze)
+// wörtlich aus dem Transkript. Steht die letzte 3er-Folge schon einmal im Text, werden die Tokens,
+// die dort folgten, als Entwurf vorgeschlagen und in einem Durchgang geprüft („Prompt Lookup“).
+std::vector<llama_token> lookup_draft(const std::vector<llama_token> &hist, int max_draft) {
+    std::vector<llama_token> d;
+    const int n = (int) hist.size();
+    for (int ng = 3; ng >= 2 && d.empty(); --ng) {
+        if (n <= ng) continue;
+        for (int i = n - ng - 1; i >= 0; --i) {
+            bool same = true;
+            for (int k = 0; k < ng; ++k) if (hist[i + k] != hist[n - ng + k]) { same = false; break; }
+            if (!same) continue;
+            for (int k = i + ng; k < n - ng && (int) d.size() < max_draft; ++k) d.push_back(hist[k]);
+            break;
+        }
+    }
+    return d;
 }
 
 // Anzahl der schnellen Kerne (große und mittlere). Handys haben 2–4 Sparkerne; landet auch nur ein
@@ -298,8 +331,9 @@ Java_de_protokollki_engine_LlamaNative_complete(JNIEnv *env, jobject, jlong hand
     llama_pos pos = n_prompt;
     const int n_vocab = llama_vocab_n_tokens(vocab);
     std::vector<llama_token_data> cur(n_vocab);
+    int logit_idx = -1;   // Position im letzten Durchgang, deren Logits gelten
     auto fill = [&]() -> llama_token_data_array {
-        const float *logits = llama_get_logits_ith(e->ctx, -1);
+        const float *logits = llama_get_logits_ith(e->ctx, logit_idx);
         for (int t = 0; t < n_vocab; ++t) cur[t] = {t, logits[t], 0.0f};
         return {cur.data(), cur.size(), -1, false};
     };
@@ -322,17 +356,57 @@ Java_de_protokollki_engine_LlamaNative_complete(JNIEnv *env, jobject, jlong hand
         llama_sampler_accept(smpl, tok);
         return tok;
     };
-    for (int i = 0; i < max_tokens; ++i) {
-        llama_token tok = sample();
-        if (llama_vocab_is_eog(vocab, tok)) break;
+    // Entwürfe prüfen: jedes Token wird genau so gewählt wie ohne Entwurf (gleicher Sampler, gleiche
+    // Grammatik); stimmt es mit dem Entwurf überein, ist das nächste schon berechnet. Ergebnis identisch,
+    // nur weniger Durchgänge.
+    std::vector<llama_token> hist(tokens.begin(), tokens.end());
+    int drafted = 0, accepted = 0, steps = 0;
+    auto emit = [&](llama_token t) -> bool {   // false = Ende (EOG)
+        if (llama_vocab_is_eog(vocab, t)) return false;
         char buf[256];
-        int n = llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, false);
+        int n = llama_token_to_piece(vocab, t, buf, sizeof(buf), 0, false);
         if (n > 0) out.append(buf, n);
-        if (pos + 1 >= n_ctx) break;
-        if (decode(*e, &tok, 1, pos, true) != 0 || e->cancel) break;
-        ++pos;
-        ++n_gen;
-        if (i % 8 == 0 && !report(1, i + 1, max_tokens)) break;
+        hist.push_back(t);
+        return true;
+    };
+    llama_token tok = sample();
+    int produced = 0;
+    bool done = !emit(tok);
+    if (!done) ++produced;
+    while (!done && produced < max_tokens && pos + 1 < n_ctx && !e->cancel) {
+        const int room = std::min({LOOKUP_MAX, max_tokens - produced, n_ctx - pos - 2});
+        std::vector<llama_token> batch{tok};
+        if (room > 0) {
+            std::vector<llama_token> d = lookup_draft(hist, room);
+            batch.insert(batch.end(), d.begin(), d.end());
+        }
+        const int nd = (int) batch.size() - 1;
+        const int rc = nd > 0 ? decode_all(*e, batch.data(), (int) batch.size(), pos)
+                              : decode(*e, batch.data(), 1, pos, true);
+        if (rc != 0 || e->cancel) break;
+        ++steps;
+        drafted += nd;
+        int ok = 0;
+        for (int j = 0; j <= nd; ++j) {
+            logit_idx = nd > 0 ? j : -1;
+            llama_token t = sample();
+            if (j < nd && t == batch[j + 1]) {
+                ++ok;
+                if (!emit(t)) { done = true; break; }
+                if (++produced >= max_tokens) { done = true; break; }
+                continue;
+            }
+            tok = t;
+            if (!emit(t)) done = true; else ++produced;
+            break;
+        }
+        accepted += ok;
+        pos += 1 + ok;
+        n_gen = pos - n_prompt;
+        // Verworfene Entwurfs-Positionen aus dem Cache entfernen
+        if (ok < nd) llama_memory_seq_rm(llama_get_memory(e->ctx), 0, pos, -1);
+        logit_idx = -1;
+        if (!report(1, produced, max_tokens)) break;
     }
     llama_sampler_free(smpl);
     if (gram) llama_sampler_free(gram);
@@ -340,9 +414,10 @@ Java_de_protokollki_engine_LlamaNative_complete(JNIEnv *env, jobject, jlong hand
         // Zeitmessung für Gerätetests (PKREPORT-Zeilen werden aus dem Systemprotokoll gelesen)
         static std::atomic<int> calls{0};
         const double tp = (t1 - t0) / 1e6, tg = (ggml_time_us() - t1) / 1e6;
-        LOGI("PKREPORT llm.%d=Prompt %d Tok in %.1f s (%.0f T/s), Antwort %d Tok in %.1f s (%.1f T/s), max %d",
-             ++calls, n_prompt, tp, tp > 0 ? n_prompt / tp : 0.0, n_gen, tg, tg > 0 ? n_gen / tg : 0.0,
-             (int) max_tokens);
+        LOGI("PKREPORT llm.%d=Prompt %d Tok in %.1f s (%.0f T/s), Antwort %d Tok in %.1f s (%.1f T/s), max %d, "
+             "Durchgänge %d, Entwurf %d/%d übernommen",
+             ++calls, n_prompt, tp, tp > 0 ? n_prompt / tp : 0.0, produced, tg, tg > 0 ? produced / tg : 0.0,
+             (int) max_tokens, steps, accepted, drafted);
     }
     if (e->cancel) return nullptr;
     return to_jstring(env, out);
