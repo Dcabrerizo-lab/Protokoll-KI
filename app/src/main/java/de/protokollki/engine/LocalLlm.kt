@@ -62,12 +62,14 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
         appContext = context.applicationContext
         markRunning(appContext, true)
         val t0 = System.currentTimeMillis()
+        val freeBefore = freeMb(context)
         var h = LlamaNative.load(path, ctx, threads, fast)
         if (h == 0L && fast) h = LlamaNative.load(path, ctx, threads, false)
         if (h == 0L && ctx > 4096) h = LlamaNative.load(path, 4096, threads, false)
         handle = h
         Timing.report("laden", "Sprachmodell ${set.id}, Kontext ${if (h != 0L) LlamaNative.contextSize(h) else 0}, " +
-            "schnell=$fast, ${(System.currentTimeMillis() - t0) / 1000.0} s")
+            "schnell=$fast, ${(System.currentTimeMillis() - t0) / 1000.0} s, Modell ${java.io.File(path).length() / 1048576} MB, " +
+            "frei vorher $freeBefore MB, nachher ${freeMb(context)} MB")
         if (handle == 0L) throw LlmException(
             "Das Sprachmodell konnte nicht geladen werden. Eventuell ist zu wenig Arbeitsspeicher frei. " +
                 "Bitte andere Apps schließen oder in den Einstellungen ein kleineres Modellpaket wählen.")
@@ -88,6 +90,13 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
          * Steht er beim nächsten Mal noch, wurde die App währenddessen beendet (meist Speicher), und
          * die App arbeitet dann sparsamer (4k Kontext, 4 Threads).
          */
+        /** Freier Arbeitsspeicher laut System (für die Messung, ob der Schnellmodus passt). */
+        fun freeMb(context: Context): Long {
+            val am = context.getSystemService(android.app.ActivityManager::class.java) ?: return -1
+            val mi = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+            return mi.availMem / 1048576
+        }
+
         fun markRunning(context: Context, running: Boolean) {
             val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             if (running) p.edit().putBoolean("running", true).commit()
