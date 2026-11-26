@@ -73,9 +73,9 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
             "schnell=$fast, ${(System.currentTimeMillis() - t0) / 1000.0} s, Modell ${java.io.File(path).length() / 1048576} MB, " +
             "frei vorher $freeBefore MB, nachher ${freeMb(context)} MB")
         if (handle != 0L) runCatching {
-            // Vorberechnete Anweisungsteile (je ca. 50 MB): nur die neuesten behalten
+            // Vorberechnete Anweisungsteile (je ca. 40–70 MB): nur die vier neuesten behalten
             val dir = java.io.File(context.cacheDir, "llm-prefix").apply { mkdirs() }
-            dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(8)?.forEach { it.delete() }
+            dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(4)?.forEach { it.delete() }
             LlamaNative.setCacheDir(h, dir.absolutePath)
         }
         if (handle == 0L) throw LlmException(
