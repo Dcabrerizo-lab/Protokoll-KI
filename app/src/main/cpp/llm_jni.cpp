@@ -26,14 +26,14 @@ namespace {
 constexpr int BATCH_SIZE = 512;
 // Höchstens so viele Entwurfs-Tokens je Durchgang (Prompt Lookup); 0 schaltet es ab.
 // PK_LOOKUP="max:mindest-n-gramm" überschreibt es für Messläufe auf dem Host (z. B. "0" oder "4:3").
-int LOOKUP_MAX = 4;
+int LOOKUP_MAX = 0;   // Messung 26.11.: auf CPUs kein Gewinn (Durchgang mit 5 Tokens kostet fast doppelt), daher aus
 int LOOKUP_MIN_NG = 2;
 void lookup_from_env() {
     static bool done = false;
     if (done) return;
     done = true;
     if (const char *v = getenv("PK_LOOKUP")) {
-        int a = 4, b = 2;
+        int a = 0, b = 2;
         const int n = sscanf(v, "%d:%d", &a, &b);
         if (n >= 1) LOOKUP_MAX = a;
         if (n >= 2) LOOKUP_MIN_NG = b;
