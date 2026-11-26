@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <atomic>
 #include <string>
@@ -23,8 +24,21 @@
 namespace {
 
 constexpr int BATCH_SIZE = 512;
-// Höchstens so viele Entwurfs-Tokens je Durchgang (Prompt Lookup); 0 schaltet es ab
-constexpr int LOOKUP_MAX = 4;
+// Höchstens so viele Entwurfs-Tokens je Durchgang (Prompt Lookup); 0 schaltet es ab.
+// PK_LOOKUP="max:mindest-n-gramm" überschreibt es für Messläufe auf dem Host (z. B. "0" oder "4:3").
+int LOOKUP_MAX = 4;
+int LOOKUP_MIN_NG = 2;
+void lookup_from_env() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    if (const char *v = getenv("PK_LOOKUP")) {
+        int a = 4, b = 2;
+        const int n = sscanf(v, "%d:%d", &a, &b);
+        if (n >= 1) LOOKUP_MAX = a;
+        if (n >= 2) LOOKUP_MIN_NG = b;
+    }
+}
 
 struct Engine {
     llama_model *model = nullptr;
@@ -121,7 +135,7 @@ int decode_all(Engine &e, const llama_token *tokens, int n, llama_pos pos0) {
 std::vector<llama_token> lookup_draft(const std::vector<llama_token> &hist, int max_draft) {
     std::vector<llama_token> d;
     const int n = (int) hist.size();
-    for (int ng = 3; ng >= 2 && d.empty(); --ng) {
+    for (int ng = std::max(3, LOOKUP_MIN_NG); ng >= LOOKUP_MIN_NG && d.empty(); --ng) {
         if (n <= ng) continue;
         for (int i = n - ng - 1; i >= 0; --i) {
             bool same = true;
@@ -359,6 +373,7 @@ Java_de_protokollki_engine_LlamaNative_complete(JNIEnv *env, jobject, jlong hand
     // Entwürfe prüfen: jedes Token wird genau so gewählt wie ohne Entwurf (gleicher Sampler, gleiche
     // Grammatik); stimmt es mit dem Entwurf überein, ist das nächste schon berechnet. Ergebnis identisch,
     // nur weniger Durchgänge.
+    lookup_from_env();
     std::vector<llama_token> hist(tokens.begin(), tokens.end());
     int drafted = 0, accepted = 0, steps = 0;
     auto emit = [&](llama_token t) -> bool {   // false = Ende (EOG)

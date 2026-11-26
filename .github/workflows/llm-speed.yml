@@ -1,0 +1,78 @@
+name: KI-Schreibtempo (A/B auf demselben Rechner)
+
+# Misst Einstellungen des Prompt Lookup (PK_LOOKUP="max:mindest-n-gramm", 0 = aus) abwechselnd auf
+# demselben Runner, damit Schwankungen zwischen Rechnern nicht das Ergebnis verfälschen.
+
+on:
+  workflow_dispatch:
+    inputs:
+      settings:
+        description: "Einstellungen, Leerzeichen-getrennt"
+        default: "0 4:2 4:3 2:3 8:3 0 4:2 4:3"
+      scenarios:
+        description: "Szenarien (PK_ONLY)"
+        default: "drei_personen,lang"
+
+jobs:
+  ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - stage: kompakt
+            url: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
+          - stage: premium
+            url: https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+    name: ${{ matrix.stage }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Modell aus dem Cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: model.gguf
+          key: gguf-${{ matrix.url }}
+      - name: Modell laden
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: curl -fsSL --retry 3 -o model.gguf "${{ matrix.url }}"
+      - name: JNI-Bibliothek bauen
+        run: bash scripts/build_host_llm.sh > build-host.log 2>&1 || (tail -50 build-host.log; exit 1)
+      - name: Szenarien exportieren
+        run: python3 scripts/quality/export_scenarios.py "$RUNNER_TEMP/scenarios.json"
+      - name: Abwechselnd messen
+        env:
+          PK_LLM_LIB: ${{ github.workspace }}/build-host/libprotokollki_llm.so
+          PK_MODEL: ${{ github.workspace }}/model.gguf
+          PK_CTX: "8192"
+          PK_STAGE: ${{ matrix.stage }}
+          PK_VARIANTS: mit
+          PK_ONLY: ${{ inputs.scenarios }}
+        run: |
+          ./gradlew --no-daemon -q -p scripts/quality/eval installDist 2>/dev/null || true
+          for s in ${{ inputs.settings }}; do
+            echo "=== PK_LOOKUP=$s"
+            PK_LOOKUP=$s ./gradlew --no-daemon -q -p scripts/quality/eval run \
+              --args="$RUNNER_TEMP/scenarios.json $RUNNER_TEMP/r-$s.jsonl" 2>&1 | grep -o "PKREPORT llm.*" | tee -a "speed-$s.txt"
+          done
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import glob, re
+          print("| Einstellung | Antwort-Tokens | Sekunden | T/s | Tokens je Durchgang |")
+          print("|---|---|---|---|---|")
+          for f in sorted(glob.glob("speed-*.txt")):
+              tok = sec = steps = 0
+              for l in open(f):
+                  m = re.search(r"Antwort (\d+) Tok in ([\d.]+) s", l)
+                  if m: tok += int(m.group(1)); sec += float(m.group(2))
+                  m = re.search(r"Durchgänge (\d+)", l)
+                  if m: steps += int(m.group(1))
+              print(f"| {f[6:-4]} | {tok} | {sec:.0f} | {tok/max(sec,1e-9):.2f} | {tok/max(steps,1):.2f} |")
+          PY
