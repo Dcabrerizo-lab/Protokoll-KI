@@ -116,7 +116,11 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
             val am = context.getSystemService(android.app.ActivityManager::class.java) ?: return false
             val mi = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
             if (mi.lowMemory) return false
-            return mi.availMem > modelBytes + 1500L * 1024 * 1024
+            // Schnellmodus legt die Gewichte umgepackt fest in den RAM (nicht eingeblendet). Gerätetest
+            // 26.11. auf dem S23+ (8 GB, 4,2 GB frei): danach nur 1,9 GB frei, lange Besprechung lief
+            // über 25 min statt 11 min (System lagert aus). Daher nur auf Handys ab 12 GB und mit viel Reserve.
+            if (mi.totalMem < 11L * 1024 * 1024 * 1024) return false
+            return mi.availMem > modelBytes + 3000L * 1024 * 1024
         }
 
         fun contextFor(context: Context, set: ModelSet, modelBytes: Long): Int {
