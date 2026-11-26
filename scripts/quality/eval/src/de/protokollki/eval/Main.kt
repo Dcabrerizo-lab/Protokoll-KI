@@ -151,16 +151,25 @@ private fun openModel(): CountingModel {
     LlamaNative.initForTest(lib)
     val h = LlamaNative.load(path, ctx, 0, true)
     check(h != 0L) { "Modell nicht geladen" }
+    // wie in der App: gleichbleibende Anweisungsteile vorberechnet ablegen und wiederverwenden
+    if (System.getenv("PK_PREFIX_CACHE") != "0")
+        LlamaNative.setCacheDir(h, java.nio.file.Files.createTempDirectory("pk-prefix").toString())
     return object : CountingModel() {
         override val contextSize = LlamaNative.contextSize(h)
         override fun countTokens(text: String) = LlamaNative.countTokens(h, text)
-        override fun complete(system: String, user: String, maxTokens: Int, temperature: Float,
-                              grammar: String?, progress: LlmProgress?): String {
+        fun run(system: String, user: String, maxTokens: Int, temperature: Float,
+                grammar: String?, progress: LlmProgress?, prefix: String?): String {
             val out = LlamaNative.complete(h, system, if (noThink) "$user /no_think" else user,
-                maxTokens, temperature, grammar, progress) ?: error("abgebrochen")
+                maxTokens, temperature, grammar, progress, prefix) ?: error("abgebrochen")
             val clean = out.replace(Regex("(?s)<think>.*?</think>"), "").trim()
             record(system, user, clean)
             return clean
         }
+        override fun complete(system: String, user: String, maxTokens: Int, temperature: Float,
+                              grammar: String?, progress: LlmProgress?) =
+            run(system, user, maxTokens, temperature, grammar, progress, null)
+        override fun completeCached(system: String, user: String, maxTokens: Int, temperature: Float,
+                                    grammar: String?, progress: LlmProgress?, cachePrefix: String) =
+            run(system, user, maxTokens, temperature, grammar, progress, cachePrefix)
     }
 }

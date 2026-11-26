@@ -30,7 +30,7 @@ class QualityTest {
                                   grammar: String?, progress: LlmProgress?): String {
                 val t0 = System.currentTimeMillis()
                 val out = LlamaNative.complete(handle, system, if (noThink) "$user /no_think" else user,
-                    maxTokens, temperature, grammar, progress) ?: error("abgebrochen")
+                    maxTokens, temperature, grammar, progress, null) ?: error("abgebrochen")
                 println("--- LLM (${System.currentTimeMillis() - t0} ms) ---\n$out\n")
                 return out.replace(Regex("(?s)<think>.*?</think>"), "").trim()
             }

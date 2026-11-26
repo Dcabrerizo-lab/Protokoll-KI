@@ -36,8 +36,10 @@ object LlamaNative {
     external fun cancel(handle: Long)
     external fun complete(
         handle: Long, system: String, user: String, maxTokens: Int,
-        temperature: Float, grammar: String?, callback: LlmProgress?,
+        temperature: Float, grammar: String?, callback: LlmProgress?, cachePrefix: String?,
     ): String?
+    /** Ordner für vorberechnete Anweisungsteile (null = aus). */
+    external fun setCacheDir(handle: Long, dir: String?)
     external fun free(handle: Long)
 }
 
@@ -70,6 +72,12 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
         Timing.report("laden", "Sprachmodell ${set.id}, Kontext ${if (h != 0L) LlamaNative.contextSize(h) else 0}, " +
             "schnell=$fast, ${(System.currentTimeMillis() - t0) / 1000.0} s, Modell ${java.io.File(path).length() / 1048576} MB, " +
             "frei vorher $freeBefore MB, nachher ${freeMb(context)} MB")
+        if (handle != 0L) runCatching {
+            // Vorberechnete Anweisungsteile (je ca. 50 MB): nur die neuesten behalten
+            val dir = java.io.File(context.cacheDir, "llm-prefix").apply { mkdirs() }
+            dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(8)?.forEach { it.delete() }
+            LlamaNative.setCacheDir(h, dir.absolutePath)
+        }
         if (handle == 0L) throw LlmException(
             "Das Sprachmodell konnte nicht geladen werden. Eventuell ist zu wenig Arbeitsspeicher frei. " +
                 "Bitte andere Apps schließen oder in den Einstellungen ein kleineres Modellpaket wählen.")
@@ -152,9 +160,10 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
         temperature: Float = 0.2f,
         grammar: String? = null,
         progress: LlmProgress? = null,
+        cachePrefix: String? = null,
     ): String {
         val prompt = if (set.noThink) "$user /no_think" else user
-        val out = LlamaNative.complete(handle, system, prompt, maxTokens, temperature, grammar, progress)
+        val out = LlamaNative.complete(handle, system, prompt, maxTokens, temperature, grammar, progress, cachePrefix)
             ?: throw LlmException("Abgebrochen")
         if (out.startsWith("\u0001")) {
             throw LlmException(

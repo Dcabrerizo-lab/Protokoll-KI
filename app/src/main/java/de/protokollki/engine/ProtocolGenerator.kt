@@ -18,6 +18,10 @@ interface TextModel {
     fun countTokens(text: String): Int
     fun complete(system: String, user: String, maxTokens: Int, temperature: Float,
                  grammar: String?, progress: LlmProgress?): String
+    /** Wie [complete]; [cachePrefix] ist der gleichbleibende Anfang von [user], den das Modell vorberechnet laden darf. */
+    fun completeCached(system: String, user: String, maxTokens: Int, temperature: Float,
+                       grammar: String?, progress: LlmProgress?, cachePrefix: String): String =
+        complete(system, user, maxTokens, temperature, grammar, progress)
 }
 
 class LocalLlmModel(private val llm: LocalLlm) : TextModel {
@@ -26,6 +30,9 @@ class LocalLlmModel(private val llm: LocalLlm) : TextModel {
     override fun complete(system: String, user: String, maxTokens: Int, temperature: Float,
                           grammar: String?, progress: LlmProgress?) =
         llm.complete(system, user, maxTokens, temperature, grammar, progress)
+    override fun completeCached(system: String, user: String, maxTokens: Int, temperature: Float,
+                                grammar: String?, progress: LlmProgress?, cachePrefix: String) =
+        llm.complete(system, user, maxTokens, temperature, grammar, progress, cachePrefix)
 }
 
 /**
@@ -134,20 +141,20 @@ class ProtocolGenerator(private val model: TextModel, private val compactJson: B
             // Notizen vieler Abschnitte können zusammen zu lang werden: dann gleichmäßig kürzen
             var fitted = material
             for (attempt in 0 until 12) {
-                val tokens = model.countTokens(SYSTEM) + model.countTokens(SUMMARY_PROMPT.format(header, extras, fitted))
+                val tokens = model.countTokens(SYSTEM) + model.countTokens(SUMMARY_PROMPT.format(extras, header, fitted))
                 if (tokens + summaryMax + 64 <= ctx) break
                 fitted = shortenEvenly(fitted, 0.8)
             }
-            raws += model.complete(SYSTEM, SUMMARY_PROMPT.format(header, extras, fitted),
-                summaryMax, 0.2f, summaryGrammar, llmProgress { prog(label, it) })
+            raws += model.completeCached(SYSTEM, SUMMARY_PROMPT.format(extras, header, fitted),
+                summaryMax, 0.2f, summaryGrammar, llmProgress { prog(label, it) }, fixedPart(SUMMARY_PROMPT, extras))
             step++
         } else {
             for ((i, c) in chunks.withIndex()) {
                 val label = if (chunks.size > 1) "Ermittle Aufgaben (${i + 1}/${chunks.size}) …"
                 else "Ermittle Aufgaben …"
                 if (!prog(label)) throw LlmException("Abgebrochen")
-                raws += model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c),
-                    tasksMax, 0.0f, tasksGrammar, llmProgress { prog(label, it) })
+                raws += model.completeCached(SYSTEM, TASKS_PROMPT.format(extras, header, c),
+                    tasksMax, 0.0f, tasksGrammar, llmProgress { prog(label, it) }, fixedPart(TASKS_PROMPT, extras))
                 step++
             }
         }
@@ -188,7 +195,8 @@ class ProtocolGenerator(private val model: TextModel, private val compactJson: B
             // Keine Aufgaben und keine erkennbaren Zusagen: zur Sicherheit gezielt nachfassen (nur Aufgaben, je Abschnitt)
             for (c in chunks) {
                 if (!progress.update(0.97f, "Prüfe Aufgaben …")) throw LlmException("Abgebrochen")
-                val r = model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c), tasksMax, 0.0f, tasksGrammar, null)
+                val r = model.completeCached(SYSTEM, TASKS_PROMPT.format(extras, header, c), tasksMax, 0.0f, tasksGrammar, null,
+                    fixedPart(TASKS_PROMPT, extras))
                 raws += r
                 tasks = tasks + refine(runCatching { parseTasks(r, n) }.getOrDefault(emptyList()))
             }
@@ -311,6 +319,10 @@ Regeln für "sensible_daten": Namen von Klienten, Patienten, Bewohnern oder ande
             ProtocolTemplate.VEREINSSITZUNG -> """Vorlage Vereinssitzung: Formales Sitzungsprotokoll. Erstes Thema "Eröffnung und Formalien" (Begrüßung, Beschlussfähigkeit, Genehmigung der Tagesordnung und des letzten Protokolls), soweit erwähnt. Jede Abstimmung gehört in "beschluesse" im Format "<Beschlusstext> – Abstimmung: X Ja, Y Nein, Z Enthaltungen, angenommen." bzw. "… einstimmig angenommen." oder "… abgelehnt.". Zahlen nur, wenn sie genannt wurden."""
         }
 
+        /** Gleichbleibender Anfang eines Prompts: Vorlagentext vor dem ersten %s plus Regeln (alles vor den Kopfdaten). */
+        internal fun fixedPart(template: String, extras: String): String =
+            template.substringBefore("%s") + extras
+
         internal fun extraRules(hasAgenda: Boolean, hasOpenTasks: Boolean,
                                 template: ProtocolTemplate = ProtocolTemplate.ALLGEMEIN): String = buildString {
             append(TASK_RULES)
@@ -320,10 +332,9 @@ Regeln für "sensible_daten": Namen von Klienten, Patienten, Bewohnern oder ande
             append("\n").append(CITE_RULE)
         }
 
+        // Reihenfolge: gleichbleibende Anweisungen zuerst (werden vorberechnet geladen), dann Kopfdaten und Material
         val SUMMARY_PROMPT = """
-%s
-
-Erstelle aus dem folgenden Material ein professionelles Ergebnisprotokoll als JSON:
+Erstelle aus dem Material am Ende ein professionelles Ergebnisprotokoll als JSON:
 - "zusammenfassung": 3 bis 5 Sätze, worum es ging und was herauskam (ohne Quellenangabe).
 - "themen": die besprochenen Themen in zeitlicher Reihenfolge. Je Thema ein kurzer "titel" und 2 bis 6 "punkte" mit Ergebnissen, Argumenten und Zahlen (vollständige, knappe Sätze).
 - "beschluesse": Entscheidungen, die die Runde getroffen hat, und jede Abstimmung mit ihrem Ergebnis (angenommen/abgelehnt). Reine Aufgabenverteilungen gehören NICHT hierher, sondern zu "aufgaben". Leere Liste, wenn keine.
@@ -333,12 +344,14 @@ Erstelle aus dem folgenden Material ein professionelles Ergebnisprotokoll als JS
 %s
 
 %s
+
+%s
 """.trimIndent()
 
         val TASKS_PROMPT = """
-%s
+Extrahiere alle Aufgaben, die im Gespräch am Ende vereinbart, zugesagt oder jemandem zugewiesen wurden, als JSON. Keine Aufgaben: "aufgaben": []
 
-Extrahiere alle Aufgaben, die in diesem Gespräch vereinbart, zugesagt oder jemandem zugewiesen wurden, als JSON. Keine Aufgaben: "aufgaben": []
+%s
 
 %s
 

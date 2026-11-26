@@ -45,8 +45,26 @@ struct Engine {
     llama_context *ctx = nullptr;
     llama_batch_ext *batch = nullptr;
     std::string chat_template;
+    std::string model_path;
+    std::string cache_dir;   // vorberechnete Anweisungsteile (leer = aus)
+    int kv_q8 = 0;           // KV-Cache in 8 Bit (1) oder 16 Bit (0): gespeicherte Zustände passen nur zum selben Typ
     std::atomic<bool> cancel{false};
 };
+
+// Schlüssel für einen vorberechneten Prompt-Anfang: Modell, KV-Typ und die Tokens selbst
+uint64_t prefix_key(const Engine &e, const llama_token *t, int n) {
+    uint64_t h = 1469598103934665603ULL;
+    auto mix = [&](const void *p, size_t len) {
+        const auto *b = static_cast<const uint8_t *>(p);
+        for (size_t i = 0; i < len; ++i) { h ^= b[i]; h *= 1099511628211ULL; }
+    };
+    mix(e.model_path.data(), e.model_path.size());
+    const uint64_t sz = llama_model_size(e.model);
+    mix(&sz, sizeof(sz));
+    mix(&e.kv_q8, sizeof(e.kv_q8));
+    mix(t, sizeof(llama_token) * n);
+    return h;
+}
 
 void log_callback(ggml_log_level level, const char *text, void *) {
     if (level >= GGML_LOG_LEVEL_WARN) {
@@ -201,6 +219,7 @@ Java_de_protokollki_engine_LlamaNative_load(JNIEnv *env, jobject, jstring jpath,
     mp.use_extra_bufts = fast == JNI_TRUE;
     const std::string path = jstr(env, jpath);
     e->model = llama_model_load_from_file(path.c_str(), mp);
+    e->model_path = path;
     if (!e->model) {
         LOGE("Modell konnte nicht geladen werden: %s", path.c_str());
         delete e;
@@ -227,6 +246,7 @@ Java_de_protokollki_engine_LlamaNative_load(JNIEnv *env, jobject, jstring jpath,
     cp.type_k = GGML_TYPE_Q8_0;
     cp.type_v = GGML_TYPE_Q8_0;
     e->ctx = llama_init_from_model(e->model, cp);
+    e->kv_q8 = e->ctx ? 1 : 0;
     if (!e->ctx) {
         LOGE("Kontext mit 8-Bit-KV nicht möglich, versuche 16 Bit");
         cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
@@ -262,6 +282,12 @@ Java_de_protokollki_engine_LlamaNative_countTokens(JNIEnv *env, jobject, jlong h
 }
 
 JNIEXPORT void JNICALL
+Java_de_protokollki_engine_LlamaNative_setCacheDir(JNIEnv *env, jobject, jlong handle, jstring dir) {
+    auto *e = reinterpret_cast<Engine *>(handle);
+    if (e) e->cache_dir = dir ? jstr(env, dir) : std::string();
+}
+
+JNIEXPORT void JNICALL
 Java_de_protokollki_engine_LlamaNative_cancel(JNIEnv *, jobject, jlong handle) {
     auto *e = reinterpret_cast<Engine *>(handle);
     if (e) e->cancel.store(true);
@@ -273,7 +299,7 @@ JNIEXPORT jstring JNICALL
 Java_de_protokollki_engine_LlamaNative_complete(JNIEnv *env, jobject, jlong handle,
                                                 jstring jsystem, jstring juser, jint max_tokens,
                                                 jfloat temperature, jstring jgrammar,
-                                                jobject callback) {
+                                                jobject callback, jstring jprefix) {
     auto *e = reinterpret_cast<Engine *>(handle);
     if (!e) return nullptr;
     e->cancel.store(false);
@@ -308,15 +334,59 @@ Java_de_protokollki_engine_LlamaNative_complete(JNIEnv *env, jobject, jlong hand
 
     llama_memory_clear(llama_get_memory(e->ctx), true);
 
-    // Prompt in Blöcken verarbeiten
+    // Gleichbleibender Anweisungsteil am Anfang des Prompts: einmal berechnen, als Datei ablegen und bei
+    // den nächsten Protokollen nur noch laden (spart je Protokoll das Einlesen mehrerer hundert Tokens).
     const int n_prompt = (int) tokens.size();
+    int n_prefix = 0;
+    std::string cache_file;
+    if (!e->cache_dir.empty() && jprefix) {
+        const std::string cp = jstr(env, jprefix);
+        const size_t at = prompt.find(cp);
+        if (cp.size() >= 200 && at != std::string::npos) {
+            const std::vector<llama_token> pt = tokenize(vocab, prompt.substr(0, at + cp.size()), true);
+            int m = 0;
+            while (m < (int) pt.size() && m < n_prompt && pt[m] == tokens[m]) ++m;
+            n_prefix = std::max(0, std::min(m - 1, n_prompt - 1));   // letztes Token kann an der Grenze abweichen
+        }
+        if (n_prefix >= 64) {
+            char name[64];
+            snprintf(name, sizeof(name), "/pk-%016llx.kv",
+                     (unsigned long long) prefix_key(*e, tokens.data(), n_prefix));
+            cache_file = e->cache_dir + name;
+        } else n_prefix = 0;
+    }
+    int start = 0;
+    bool loaded_prefix = false;
+    if (n_prefix > 0 && access(cache_file.c_str(), R_OK) == 0) {
+        std::vector<llama_token> got(n_prefix);
+        size_t cnt = 0;
+        const size_t r = llama_state_seq_load_file(e->ctx, cache_file.c_str(), 0, got.data(), got.size(), &cnt);
+        if (r > 0 && (int) cnt == n_prefix && std::equal(got.begin(), got.end(), tokens.begin())) {
+            start = n_prefix;
+            loaded_prefix = true;
+        } else {
+            llama_memory_clear(llama_get_memory(e->ctx), true);
+            unlink(cache_file.c_str());
+        }
+    }
+
+    // Prompt in Blöcken verarbeiten
     const int64_t t0 = ggml_time_us();
-    for (int i = 0; i < n_prompt; i += BATCH_SIZE) {
-        const int n = std::min(BATCH_SIZE, n_prompt - i);
+    for (int i = start; i < n_prompt;) {
+        // Blockgrenze am Ende des Anweisungsteils, damit er danach gespeichert werden kann
+        const int limit = (!loaded_prefix && n_prefix > 0 && i < n_prefix) ? n_prefix : n_prompt;
+        const int n = std::min(BATCH_SIZE, limit - i);
         if (decode(*e, tokens.data() + i, n, i, i + n == n_prompt) != 0 || e->cancel) {
             return e->cancel ? nullptr : to_jstring(env, "\001DECODE_FAILED");
         }
-        if (!report(0, i + n, n_prompt)) return nullptr;
+        i += n;
+        if (!loaded_prefix && n_prefix > 0 && i == n_prefix) {
+            const std::string tmp = cache_file + ".tmp";
+            if (llama_state_seq_save_file(e->ctx, tmp.c_str(), 0, tokens.data(), n_prefix) > 0)
+                rename(tmp.c_str(), cache_file.c_str());
+            else unlink(tmp.c_str());
+        }
+        if (!report(0, i, n_prompt)) return nullptr;
     }
 
     // Sampler: niedrige Temperatur für sachliche Protokolle
@@ -430,9 +500,9 @@ Java_de_protokollki_engine_LlamaNative_complete(JNIEnv *env, jobject, jlong hand
         static std::atomic<int> calls{0};
         const double tp = (t1 - t0) / 1e6, tg = (ggml_time_us() - t1) / 1e6;
         LOGI("PKREPORT llm.%d=Prompt %d Tok in %.1f s (%.0f T/s), Antwort %d Tok in %.1f s (%.1f T/s), max %d, "
-             "Durchgänge %d, Entwurf %d/%d übernommen",
+             "Durchgänge %d, Entwurf %d/%d übernommen, vorberechnet %d",
              ++calls, n_prompt, tp, tp > 0 ? n_prompt / tp : 0.0, produced, tg, tg > 0 ? produced / tg : 0.0,
-             (int) max_tokens, steps, accepted, drafted);
+             (int) max_tokens, steps, accepted, drafted, start);
     }
     if (e->cancel) return nullptr;
     return to_jstring(env, out);
