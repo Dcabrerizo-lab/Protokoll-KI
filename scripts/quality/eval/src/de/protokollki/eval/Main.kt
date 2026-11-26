@@ -62,7 +62,7 @@ fun main(args: Array<String>) {
         model.reset()
         val t0 = System.currentTimeMillis()
         val r = runCatching {
-            ProtocolGenerator(model).generate(name, monday, segments, speakers, wantSummary = true,
+            ProtocolGenerator(model, compactJson = stage == "kompakt").generate(name, monday, segments, speakers, wantSummary = true,
                 agenda = sc.getJSONArray("agenda").strs(), openTasks = open,
                 template = ProtocolTemplate.of(sc.getString("template")), vocabulary = vocab,
                 participants = participants) { _, _ -> true }

@@ -264,7 +264,7 @@ class ProcessingService : LifecycleService() {
         val llm = LocalLlm(applicationContext, set)
         currentLlm = llm
         try {
-            val gen = ProtocolGenerator(LocalLlmModel(llm))
+            val gen = ProtocolGenerator(LocalLlmModel(llm), compactJson = set.id == "kompakt")
             val candidates = if (AppSettings.state.value.trackTasks)
                 de.protokollki.data.TaskTracker.candidatesFor(meeting) else emptyList()
             val openTasks = candidates.mapIndexed { i, (m, t) ->

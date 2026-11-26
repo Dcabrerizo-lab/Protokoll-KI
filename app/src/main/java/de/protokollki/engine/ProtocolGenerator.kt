@@ -33,7 +33,15 @@ class LocalLlmModel(private val llm: LocalLlm) : TextModel {
  * sensible Begriffe aus dem Transkript. Lange Besprechungen werden abschnittsweise
  * verdichtet (Map-Reduce). Ausgaben sind per Grammatik auf gültiges JSON beschränkt.
  */
-class ProtocolGenerator(private val model: TextModel) {
+/**
+ * [compactJson]: JSON ohne Einrückungen schreiben lassen. Bewertung 26.11. (je zwei Läufe): beim kleinen
+ * Modell (Kompakt) 35 % weniger Tokens und weniger Fehler; bei Standard/Premium nur 7–10 % weniger Tokens,
+ * aber zusätzliche erfundene Aufgaben. Daher nur für Kompakt.
+ */
+class ProtocolGenerator(private val model: TextModel, private val compactJson: Boolean = false) {
+    private val summaryGrammar get() = if (compactJson) compact(SUMMARY_GRAMMAR) else SUMMARY_GRAMMAR
+    private val tasksGrammar get() = if (compactJson) compact(TASKS_GRAMMAR) else TASKS_GRAMMAR
+
 
     /** progress(fraction 0..1, text) -> false = abbrechen */
     fun interface Progress { fun update(fraction: Float, text: String): Boolean }
@@ -131,7 +139,7 @@ class ProtocolGenerator(private val model: TextModel) {
                 fitted = shortenEvenly(fitted, 0.8)
             }
             raws += model.complete(SYSTEM, SUMMARY_PROMPT.format(header, extras, fitted),
-                summaryMax, 0.2f, SUMMARY_GRAMMAR, llmProgress { prog(label, it) })
+                summaryMax, 0.2f, summaryGrammar, llmProgress { prog(label, it) })
             step++
         } else {
             for ((i, c) in chunks.withIndex()) {
@@ -139,7 +147,7 @@ class ProtocolGenerator(private val model: TextModel) {
                 else "Ermittle Aufgaben …"
                 if (!prog(label)) throw LlmException("Abgebrochen")
                 raws += model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c),
-                    tasksMax, 0.0f, TASKS_GRAMMAR, llmProgress { prog(label, it) })
+                    tasksMax, 0.0f, tasksGrammar, llmProgress { prog(label, it) })
                 step++
             }
         }
@@ -180,7 +188,7 @@ class ProtocolGenerator(private val model: TextModel) {
             // Keine Aufgaben und keine erkennbaren Zusagen: zur Sicherheit gezielt nachfassen (nur Aufgaben, je Abschnitt)
             for (c in chunks) {
                 if (!progress.update(0.97f, "Prüfe Aufgaben …")) throw LlmException("Abgebrochen")
-                val r = model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c), tasksMax, 0.0f, TASKS_GRAMMAR, null)
+                val r = model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c), tasksMax, 0.0f, tasksGrammar, null)
                 raws += r
                 tasks = tasks + refine(runCatching { parseTasks(r, n) }.getOrDefault(emptyList()))
             }
@@ -345,6 +353,9 @@ Transkript:
                 "tasks ::= \"[\" ws ( task ws (\",\" ws task ws)* )? \"]\"\n" +
                 "task ::= \"{\" ws \"\\\"aufgabe\\\":\" ws string ws \",\" ws \"\\\"verantwortlich\\\":\" ws string ws \",\" ws \"\\\"frist\\\":\" ws string ws \"}\"\n" +
                 "tail ::= \",\" ws \"\\\"erledigte_aufgaben\\\":\" ws strlist ws \",\" ws \"\\\"sensible_daten\\\":\" ws strlist ws\n"
+
+        private const val WS_FULL = "ws ::= [ \\t\\n]{0,20}"
+        internal fun compact(grammar: String) = grammar.replace(WS_FULL, "ws ::= [ ]?")
 
         val SUMMARY_GRAMMAR = """
 root ::= "{" ws "\"zusammenfassung\":" ws string ws "," ws "\"themen\":" ws themen ws "," ws "\"beschluesse\":" ws strlist ws "," ws "\"offene_punkte\":" ws strlist ws "," ws "\"aufgaben\":" ws tasks ws tail "}"
