@@ -4,23 +4,6 @@
 #include <android/log.h>
 #include <jni.h>
 #include <unistd.h>
-#if defined(__aarch64__)
-#include <sys/auxv.h>
-#include <sys/prctl.h>
-#include <asm/hwcap.h>
-#ifndef HWCAP_SVE
-#define HWCAP_SVE (1UL << 22)
-#endif
-#ifndef HWCAP2_I8MM
-#define HWCAP2_I8MM (1UL << 13)
-#endif
-#ifndef PR_SVE_GET_VL
-#define PR_SVE_GET_VL 51
-#endif
-#ifndef PR_SVE_VL_LEN_MASK
-#define PR_SVE_VL_LEN_MASK 0xffff
-#endif
-#endif
 
 #include <algorithm>
 #include <cstring>
@@ -202,32 +185,7 @@ JNIEXPORT void JNICALL
 Java_de_protokollki_engine_LlamaNative_init(JNIEnv *env, jobject, jstring native_lib_dir) {
     llama_log_set(log_callback, nullptr);
     const std::string dir = jstr(env, native_lib_dir);
-    // Handys mit SVE und nur 128-Bit-Vektoren (Pixel 8/Tensor G3 u. a.): die SVE-Rechenkerne sind dort
-    // beim Schreiben langsamer als NEON (Gerätetest 26.11.: Pixel 8 2,3–3,2 T/s gegenüber 6,1 T/s auf dem
-    // S23+ ohne SVE). Dann gezielt die NEON-Variante mit Int8-Matrixbefehlen laden.
-    bool loaded = false;
-#if defined(__aarch64__)
-    {
-        const unsigned long hw = getauxval(AT_HWCAP), hw2 = getauxval(AT_HWCAP2);
-        const bool sve = (hw & HWCAP_SVE) != 0;
-        int vl = 0;
-        if (sve) { const int r = prctl(PR_SVE_GET_VL); if (r > 0) vl = r & PR_SVE_VL_LEN_MASK; }
-        if (sve && vl == 16) {
-            const bool i8mm = (hw2 & HWCAP2_I8MM) != 0;
-            const char *names[] = {i8mm ? "libggml-cpu-android_armv8.6_1.so" : "libggml-cpu-android_armv8.2_2.so",
-                                   "libggml-cpu-android_armv8.2_2.so"};
-            for (const char *n : names) {
-                const std::string lib = dir + "/" + n;
-                if (access(lib.c_str(), R_OK) == 0 && ggml_backend_load(lib.c_str())) {
-                    LOGI("PKREPORT cpuwahl=SVE %d Bit, statt SVE geladen: %s", vl * 8, n);
-                    loaded = true;
-                    break;
-                }
-            }
-        }
-    }
-#endif
-    if (!loaded) ggml_backend_load_all_from_path(dir.c_str());
+    ggml_backend_load_all_from_path(dir.c_str());
     llama_backend_init();
     // Welche CPU-Variante (NEON, DOTPROD, I8MM, SVE …) geladen wurde: wichtig für die Geschwindigkeit
     LOGI("PKREPORT cpu=%s", llama_print_system_info());
