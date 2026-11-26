@@ -29,10 +29,10 @@ class LocalLlmModel(private val llm: LocalLlm) : TextModel {
     override fun countTokens(text: String) = llm.countTokens(text)
     override fun complete(system: String, user: String, maxTokens: Int, temperature: Float,
                           grammar: String?, progress: LlmProgress?) =
-        llm.complete(system, user, maxTokens, temperature, grammar, progress)
+        llm.complete(system, user, maxTokens, temperature, grammar, progress = progress)
     override fun completeCached(system: String, user: String, maxTokens: Int, temperature: Float,
                                 grammar: String?, progress: LlmProgress?, cachePrefix: String) =
-        llm.complete(system, user, maxTokens, temperature, grammar, progress, cachePrefix)
+        llm.complete(system, user, maxTokens, temperature, grammar, cachePrefix, progress)
 }
 
 /**

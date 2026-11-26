@@ -16,7 +16,8 @@ object LlamaNative {
     external fun countTokens(handle: Long, text: String): Int
     external fun cancel(handle: Long)
     external fun complete(handle: Long, system: String, user: String, maxTokens: Int,
-                          temperature: Float, grammar: String?, callback: LlmProgress?): String?
+                          temperature: Float, grammar: String?, callback: LlmProgress?, cachePrefix: String?): String?
+    external fun setCacheDir(handle: Long, dir: String?)
     external fun free(handle: Long)
 }
 
@@ -24,7 +25,7 @@ class LocalLlm {
     val contextSize = 0
     fun countTokens(text: String) = 0
     fun complete(system: String, user: String, maxTokens: Int, temperature: Float,
-                 grammar: String?, progress: LlmProgress?) = ""
+                 grammar: String?, cachePrefix: String? = null, progress: LlmProgress? = null) = ""
 }
 
 class Holder<T>(val value: T)

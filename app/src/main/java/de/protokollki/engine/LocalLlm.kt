@@ -159,8 +159,8 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
         maxTokens: Int = 1500,
         temperature: Float = 0.2f,
         grammar: String? = null,
-        progress: LlmProgress? = null,
         cachePrefix: String? = null,
+        progress: LlmProgress? = null,
     ): String {
         val prompt = if (set.noThink) "$user /no_think" else user
         val out = LlamaNative.complete(handle, system, prompt, maxTokens, temperature, grammar, progress, cachePrefix)
