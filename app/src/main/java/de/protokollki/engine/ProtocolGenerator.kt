@@ -60,15 +60,22 @@ class ProtocolGenerator(private val model: TextModel) {
         openTasks: List<OpenTask> = emptyList(),
         template: ProtocolTemplate = ProtocolTemplate.ALLGEMEIN,
         vocabulary: List<String> = emptyList(),
+        participants: List<String> = emptyList(),
         progress: Progress,
     ): Result {
         val names = speakers.associate { it.id to it.name }
-        fun nameOf(id: Int) = names[id] ?: "Person ${id + 1}"
+        // Sprecherbezeichnungen ("Person 2"), deren Name aus direkter Anrede eindeutig folgt, mit Namen zeigen:
+        // das Modell ordnet Aufgaben dann richtig zu ("[4] Frau Becker: Ja, das mache ich.")
+        val known = TranscriptRules.speakerNames(segments)
+            .filterKeys { id -> names[id]?.let { DEFAULT_LABEL.matches(it) } ?: true }
+        fun nameOf(id: Int) = known[id] ?: names[id] ?: "Person ${id + 1}"
         val lines = segments.mapIndexed { i, s -> "[$i] ${nameOf(s.speakerId)}: ${s.text}" }
-        val participants = segments.map { nameOf(it.speakerId) }.distinct()
+        val invited = participants.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        val voices = segments.map { nameOf(it.speakerId) }.distinct()
         val date = SimpleDateFormat("EEEE, dd.MM.yyyy", Locale.GERMAN).format(Date(dateMillis))
         val header = buildString {
-            append("Besprechung: $title\nDatum: $date\nTeilnehmende: ${participants.joinToString(", ")}")
+            append("Besprechung: $title\nDatum: $date\nTeilnehmende: ${voices.joinToString(", ")}")
+            if (invited.isNotEmpty()) append("\nTeilnehmende laut Einladung: ${invited.joinToString(", ")}")
             if (template != ProtocolTemplate.ALLGEMEIN) append("\nArt: ${template.label}")
             if (vocabulary.isNotEmpty()) {
                 append("\nRichtige Schreibweise von Namen und Fachbegriffen: ")
@@ -137,35 +144,94 @@ class ProtocolGenerator(private val model: TextModel) {
             }
         }
 
-        // Kleine Modelle lassen im kombinierten Durchgang manchmal die Aufgaben weg:
-        // dann gezielt nachfassen (nur Aufgaben, je Abschnitt).
-        if (wantSummary && raws.none { r -> runCatching { parseTasks(r, segments.size) }.getOrDefault(emptyList()).isNotEmpty() }) {
-            for (c in chunks) {
-                val label = "Prüfe Aufgaben …"
-                if (!progress.update(0.97f, label)) throw LlmException("Abgebrochen")
-                raws += model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c),
-                    tasksMax, 0.0f, TASKS_GRAMMAR, null)
-            }
-        }
-
         val meetingDate = java.time.Instant.ofEpochMilli(dateMillis)
             .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
         val n = segments.size
-        val summary = if (wantSummary) runCatching { parseSummary(raws.first(), n) }.getOrElse { Summary() } else Summary()
-        val tasks = raws.flatMap { r -> runCatching { parseTasks(r, n) }.getOrDefault(emptyList()) }
+        val mentioned = (segments.joinToString(" ") { it.text } + " " + (invited + vocabulary).joinToString(" ")).lowercase()
+        var summary = if (wantSummary) runCatching { parseSummary(raws.first(), n) }.getOrElse { Summary() } else Summary()
+        val commitments = TranscriptRules.commitments(segments)
+        fun refine(list: List<TaskItem>) = list
+            .map { it.copy(ref = checkRef(it.text, it.ref, segments, commitments)) }
+            .map { t -> t.copy(due = checkDue(t, segments, meetingDate)) }
             .map { it.copy(due = DateResolver.resolve(it.due, meetingDate)) }
-            .map { if (it.ref < 0) it.copy(ref = locateRef(it.text, segments)) else it }
-            .map { it.copy(owner = resolveOwner(it.owner, it.ref, segments, ::nameOf, it.text)) }
+            .map { it.copy(owner = resolveOwner(it.owner, it.ref, segments, ::nameOf, it.text, known, mentioned)) }
+        // Einzelne Wörter ("Verschiedenes") sind keine Aufgaben
+        var tasks = refine(raws.flatMap { r -> runCatching { parseTasks(r, n) }.getOrDefault(emptyList()) }
+            .filter { it.text.trim().contains(' ') && !TranscriptRules.procedural(it.text) && !TOPIC_LIKE(it.text) })
+            // Beleg berichtet nur Erledigtes ("habe ich organisiert") und enthält keine Zusage: keine Aufgabe
+            .filterNot { t -> t.ref in segments.indices && commitments.none { it.ref == t.ref } &&
+                TranscriptRules.reportedDone(t.text, segments[t.ref].text) }
+            // Abschrift einer bekannten offenen Aufgabe ohne Beleg im Gespräch: wird schon als offen geführt
+            .filterNot { t -> t.ref !in segments.indices && openTasks.any { (words(it.text) intersect words(t.text)).size >= 2 } }
+
+        // Aufgaben-Nachfassen ohne zusätzliche Modellrunde: Zusagen und Aufträge im Transkript, die keine
+        // Aufgabe abdeckt (kleine Modelle übersehen sie oft), werden regelbasiert als Aufgabe formuliert.
+        val pending = commitments.filter { c -> tasks.none { covers(it, c, segments) } }
+            // Zusage als Antwort auf eine Bitte direkt davor: gehört zu dieser Bitte
+            .filterNot { c -> c.kind == TranscriptRules.Kind.SELF && commitments.any { o ->
+                o.kind == TranscriptRules.Kind.REQUEST && o.ref == c.ref - 1 &&
+                    segments[o.ref].speakerId != segments[c.ref].speakerId } }
+            .distinctBy { it.ref to it.sentence }
+        if (pending.isNotEmpty()) {
+            val extra = pending.map { c -> TaskItem(TranscriptRules.phraseTask(c.sentence), "offen", "offen", ref = c.ref) }
+                .filter { it.text.split(' ').size >= 2 }
+            tasks = tasks + refine(extra)
+        } else if (wantSummary && tasks.isEmpty()) {
+            // Keine Aufgaben und keine erkennbaren Zusagen: zur Sicherheit gezielt nachfassen (nur Aufgaben, je Abschnitt)
+            for (c in chunks) {
+                if (!progress.update(0.97f, "Prüfe Aufgaben …")) throw LlmException("Abgebrochen")
+                val r = model.complete(SYSTEM, TASKS_PROMPT.format(header, extras, c), tasksMax, 0.0f, TASKS_GRAMMAR, null)
+                raws += r
+                tasks = tasks + refine(runCatching { parseTasks(r, n) }.getOrDefault(emptyList()))
+            }
+        }
         val doneKeys = mutableMapOf<String, Int>()
         raws.forEach { r -> runCatching { parseCompleted(r, n) }.getOrDefault(emptyList()).forEach { (k, ref) -> doneKeys.putIfAbsent(k, ref) } }
+        if (openTasks.isNotEmpty()) {
+            val open = openTasks.associate { it.key to it.text }
+            // Vom Modell gemeldet, im Gespräch aber ausdrücklich noch offen: verwerfen
+            doneKeys.keys.removeAll { k -> TranscriptRules.stillOpen(open[k] ?: "", segments) }
+            TranscriptRules.completedFromTranscript(open, segments).forEach { (k, ref) -> doneKeys.putIfAbsent(k, ref) }
+        }
         val completed = openTasks.filter { it.key in doneKeys }
-        val finalTasks = dedupe(tasks)
-        val sensitive = (raws.flatMap { parseSensitive(it, participants) } +
-            if (template == ProtocolTemplate.FALLBESPRECHUNG || template == ProtocolTemplate.UEBERGABE)
-                addressedClients(segments, finalTasks) else emptyList())
+        val finalTasks = dedupe(tasks).let { all ->
+            // Gleiche Person, gleicher Gegenstand: die Aufgabe mit Zusage im Beleg ersetzt die ohne
+            fun committed(t: TaskItem) = commitments.any { it.ref == t.ref }
+            fun grounded(t: TaskItem) = segments.getOrNull(t.ref)?.let { (contentWords(t.text) intersect contentWords(it.text)).size } ?: 0
+            all.filterNot { t -> !GENERIC.matches(t.owner) && !committed(t) && all.any { u -> u !== t &&
+                u.owner.equals(t.owner, true) && committed(u) && TranscriptRules.sharedNouns(t.text, u.text).isNotEmpty() } }
+                // Gleicher Beleg, gleiche Person: eine Formulierung ohne jeden Bezug zum Beleg weicht der passenden
+                .let { kept -> kept.filterNot { t -> grounded(t) == 0 && kept.any { u -> u !== t && u.ref == t.ref &&
+                    u.owner.equals(t.owner, true) && grounded(u) >= 2 } } }
+        }
+        // Team = Sprechende, Eingeladene und ausdrücklich Beauftragte. Verantwortliche aus der Modellausgabe zählen
+        // nicht automatisch dazu: kleine Modelle tragen dort auch Klientinnen und Klienten ein.
+        val assigned = TranscriptRules.staffNames(segments)
+        val staff = (known.values + invited + assigned + finalTasks.map { it.owner }.filter { o -> known.values.any { it.equals(o, true) } })
+            .flatMap { it.lowercase().split(' ') }.filter { it.length >= 3 && it !in setOf("frau", "herr", "person") }.toSet()
+        if (wantSummary) summary = refineSummary(summary, segments, agenda, template, finalTasks, staff)
+        val sensitive = (raws.flatMap { parseSensitive(it, voices + invited) } +
+            (if (template == ProtocolTemplate.FALLBESPRECHUNG || template == ProtocolTemplate.UEBERGABE)
+                addressedClients(segments, finalTasks) else emptyList()) +
+            TranscriptRules.addressesAndPhones(segments) +
+            TranscriptRules.clientsByContext(segments, staff + doers(segments)) +
+            (if (template == ProtocolTemplate.FALLBESPRECHUNG || template == ProtocolTemplate.UEBERGABE)
+                TranscriptRules.healthData(segments) else emptyList()))
+            .filterNot { term -> term.lowercase().split(' ').filter { it.length >= 3 }.let { w -> w.isNotEmpty() && w.all { it in staff || it in setOf("frau", "herr", "herrn") } } }
             .distinctBy { it.lowercase() }
+            .let { all -> all.filterNot { t -> all.any { u -> u != t && u.length > t.length &&
+                Regex("(?<![\\p{L}])${Regex.escape(t.lowercase())}(?![\\p{L}])").containsMatchIn(u.lowercase()) } } }  // "Schulz" neben "Frau Schulz"
+        // Klientin/Klient als Verantwortliche (kleine Modelle verwechseln Fall und Zuständige): neu ableiten
+        val clientNames = sensitive.flatMap { it.lowercase().split(' ') }.filter { it.length >= 3 && it !in staff }.toSet()
+        val ownedTasks = finalTasks.map { t ->
+            val surname = t.owner.substringAfterLast(' ').lowercase()
+            if (!GENERIC.matches(t.owner) && surname in clientNames)
+                t.copy(owner = resolveOwner("offen", t.ref, segments, ::nameOf, t.text, known, mentioned)
+                    .takeIf { it.substringAfterLast(' ').lowercase() !in clientNames } ?: "offen")
+            else t
+        }
         progress.update(1f, "Fertig")
-        return Result(summary, finalTasks, completed,
+        return Result(summary, ownedTasks, completed,
             completed.associate { it.taskId to (doneKeys[it.key] ?: -1) }, sensitive)
     }
 
@@ -216,11 +282,11 @@ Transkript:
 %s
 """.trimIndent()
 
-        private const val CITE_RULE = """Quellenangabe: Setze an das Ende JEDES Punkts, Beschlusses, offenen Punkts und jeder Aufgabe die Nummer der Transkriptzeile, die ihn belegt, in eckigen Klammern, z. B. "Ab März wird die Tour Nord geteilt. [8]"."""
+        private const val CITE_RULE = """Quellenangabe: Setze an das Ende JEDES Punkts, Beschlusses, offenen Punkts und jeder Aufgabe die Nummer der Transkriptzeile, die ihn belegt, in eckigen Klammern, Muster: "<Aussage>. [8]"."""
 
         private const val TASK_RULES = """Regeln für "aufgaben" (alles, was jemand erledigen soll oder zugesagt hat):
-- "aufgabe": kurz und konkret, mit dem Verb am Ende (z. B. "Drei Angebote für Möbel einholen [3]").
-- "verantwortlich": Name der zuständigen Person, wie er im Gespräch fällt (wird jemand mit "Frau X" oder "Herr Y" angesprochen, diesen Namen verwenden). Sagt jemand "mache ich", ist es die sprechende Person. Unklar: "offen".
+- "aufgabe": kurz und konkret, mit dem Verb am Ende, Muster: "<Gegenstand> <Verb> [Zeilennummer]".
+- "verantwortlich": Name der Person, die die Aufgabe übernimmt, wie er im Gespräch fällt. Wird jemand mit "Frau …" oder "Herr …" angesprochen oder genannt, diesen Namen verwenden. Sagt jemand "mache ich" oder "ich kümmere mich", ist es die sprechende Person (Name vor dem Doppelpunkt). Unklar: "offen".
 - "frist": die Zeitangabe GENAU so, wie sie im Gespräch genannt wurde (z. B. "Freitag", "Ende Januar", "15. Januar", "nächste Sitzung"). NICHT selbst in ein Datum umrechnen. Keine Angabe: "offen".
 - Nur echte Aufgaben, nichts erfinden.
 Regeln für "sensible_daten": Namen von Klienten, Patienten, Bewohnern oder anderen Personen, über die gesprochen wird (NICHT die Teilnehmenden), sowie Adressen, Telefonnummern, Geburtsdaten und Diagnosen, jeweils genau so geschrieben wie im Transkript. Leere Liste, wenn keine."""
@@ -252,7 +318,7 @@ Regeln für "sensible_daten": Namen von Klienten, Patienten, Bewohnern oder ande
 Erstelle aus dem folgenden Material ein professionelles Ergebnisprotokoll als JSON:
 - "zusammenfassung": 3 bis 5 Sätze, worum es ging und was herauskam (ohne Quellenangabe).
 - "themen": die besprochenen Themen in zeitlicher Reihenfolge. Je Thema ein kurzer "titel" und 2 bis 6 "punkte" mit Ergebnissen, Argumenten und Zahlen (vollständige, knappe Sätze).
-- "beschluesse": Entscheidungen, die die Runde getroffen hat (z. B. "Ab März wird ..."). Reine Aufgabenverteilungen gehören NICHT hierher, sondern zu "aufgaben". Leere Liste, wenn keine.
+- "beschluesse": Entscheidungen, die die Runde getroffen hat, und jede Abstimmung mit ihrem Ergebnis (angenommen/abgelehnt). Reine Aufgabenverteilungen gehören NICHT hierher, sondern zu "aufgaben". Leere Liste, wenn keine.
 - "offene_punkte": ungeklärte Fragen und vertagte Themen. Leere Liste, wenn keine.
 - "aufgaben", "erledigte_aufgaben", "sensible_daten": siehe Regeln.
 
@@ -291,45 +357,193 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
 """.trimIndent() + "\n" + JSON_STRING
 
         private val ADDRESS = Regex("\\b(Frau|Herr|Herrn)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})")
-        private val GENERIC = Regex("^(Person \\d+|Sprecher(in)? \\d+|offen|unklar|unbekannt|keine angabe|niemand|alle|team|ich|sie|du|wir|er|ihr|-|n/?a|)$", RegexOption.IGNORE_CASE)
+        private val TASK_NAME = Regex("(?<!für |mit |von |bei |an |zu |über |um |gegen |ohne |und )\\b(Frau|Herr)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})")
+        private val STAFF_ACTION = Regex("\\b(?:Frau|Herr)\\s+(?:Dr\\.\\s+)?([A-ZÄÖÜ][\\p{L}-]{1,30})\\s+(?:übernimmt|organisiert|beantragt|kümmert sich|klärt|erstellt|bestellt|fordert|ruft|schreibt|meldet|prüft|kontaktiert|informiert|vereinbart|besorgt|holt|plant|dokumentiert|trägt)(?![\\p{L}])")
+        /** Stichpunkt statt Aufgabe ("Insulintherapie - Basalinsulin abends …"): Gliederungszeichen, kein Verb im Infinitiv */
+        private fun TOPIC_LIKE(text: String): Boolean = Regex("\\s[-–+]\\s").containsMatchIn(text) &&
+            !Regex("(?:^|\\s)\\p{Ll}\\p{L}+(?:en|ern|eln)\\b").containsMatchIn(text) &&
+            !Regex("^\\p{L}+(?:en|ern|eln)\\b").containsMatchIn(text.trim())
+
+        /** "Person 2: …", "Frau Kaiser: …" – Sprecherzeile aus dem Transkript übernommen */
+        private val SPEAKER_PREFIX = Regex("^\\s*(?:Person \\d+|Sprecher(?:in)? \\d+|(?:Frau|Herr)\\s+(?:Dr\\.\\s+)?[A-ZÄÖÜ][\\p{L}-]{1,30})\\s*:\\s*")
+        private val DEFAULT_LABEL = Regex("^(Person|Sprecher(in)?) \\d+$")
+        private val GENERIC = Regex("^(Person \\d+|Sprecher(in)? \\d+|offen|unklar|unbekannt|keine angabe|niemand|alle|alle beteiligten|alle mitarbeitenden|das team|team|ich|sie|du|wir|er|ihr|-|n/?a|)$", RegexOption.IGNORE_CASE)
 
         /**
          * Fall- und Übergabebesprechungen: angesprochene Personen ("Herr Krüger", "Frau Lehmann"), die
          * keine Aufgabe übernehmen, sind in der Regel Klientinnen und Klienten. Sie werden als sensibel
          * vorgeschlagen, auch wenn das Sprachmodell sie nicht meldet (kleine Modelle tun das selten).
          */
+        private fun doers(segments: List<Segment>): Set<String> =
+            segments.flatMap { seg -> STAFF_ACTION.findAll(seg.text).map { it.groupValues[1].lowercase() }.toList() }.toSet()
+
         internal fun addressedClients(segments: List<Segment>, tasks: List<TaskItem>): List<String> {
             val staff = tasks.flatMap { t -> ADDRESS.findAll(t.owner).map { it.groupValues[2].lowercase() }.toList() +
                 t.owner.split(' ').map { it.lowercase() } }.toSet()
+            // Wer eine Aufgabe übernimmt ("Frau Schmidt beantragt …", "Herr Neumann übernimmt …"), gehört zum Team
+            val doers = segments.flatMap { seg -> STAFF_ACTION.findAll(seg.text).map { it.groupValues[1].lowercase() }.toList() }.toSet()
             return segments.flatMap { seg -> ADDRESS.findAll(seg.text).map { it.groupValues[2] }.toList() }
-                .filter { it.lowercase() !in staff }
+                .filter { it.lowercase() !in staff && it.lowercase() !in doers }
                 .distinctBy { it.lowercase() }
         }
 
         /**
          * Kleine Modelle setzen als Verantwortliche oft die Sprecherbezeichnung ("Person 2") statt des
-         * angesprochenen Namens. Steht im Beleg oder im Satz davor eine Anrede ("Frau Becker, können
-         * Sie …"), die eine andere Person an diese richtet, wird dieser Name übernommen.
+         * gemeinten Namens. Ist die Angabe unbestimmt (oder ein Name, der im Gespräch nicht vorkommt), wird
+         * die zuständige Person aus dem Beleg abgeleitet: Name in der Aufgabe, Selbstverpflichtung oder Bitte
+         * im passenden Satz ([TranscriptRules.ownerFromRef]), Anrede im Beleg oder im Beitrag davor, zuletzt
+         * die per Anrede erkannte Sprecherbezeichnung ([known]). Findet sich nichts, bleibt die Angabe.
          */
         internal fun resolveOwner(owner: String, ref: Int, segments: List<Segment>,
-                                  nameOf: (Int) -> String, taskText: String = ""): String {
+                                  nameOf: (Int) -> String, taskText: String = "",
+                                  known: Map<Int, String> = emptyMap(), mentioned: String? = null): String {
             val o = owner.trim()
-            if (!GENERIC.matches(o)) return owner
-            // Name steht in der Aufgabe selbst ("Herr Wagner klärt die Telefonanlage")
-            ADDRESS.find(taskText)?.let { m ->
-                return (if (m.groupValues[1] == "Herrn") "Herr" else m.groupValues[1]) + " " + m.groupValues[2]
+            val invented = !GENERIC.matches(o) && mentioned != null &&
+                o.split(' ').filter { it.length >= 3 && it.lowercase() !in setOf("frau", "herr", "herrn", "dr.") }
+                    .let { w -> w.isNotEmpty() && w.none { mentioned.contains(it.lowercase()) } }
+            if (!GENERIC.matches(o) && !invented) {
+                // Belegsatz weist ausdrücklich jemand anderem zu: der Beleg gewinnt
+                val explicit = TranscriptRules.explicitOwner(ref, segments, known, taskText)
+                return if (explicit != null && !explicit.equals(o, true) &&
+                    explicit.substringAfterLast(' ').lowercase() !in o.lowercase()) explicit else owner
             }
-            if (ref !in segments.indices) return owner
-            for (i in listOf(ref, ref - 1)) {
-                val seg = segments.getOrNull(i) ?: continue
-                val m = ADDRESS.find(seg.text) ?: continue
-                val title = if (m.groupValues[1] == "Herrn") "Herr" else m.groupValues[1]
-                val name = "$title ${m.groupValues[2]}"
-                // Wer spricht, meint mit der Anrede jemand anderen
-                if (nameOf(seg.speakerId).equals(name, ignoreCase = true)) continue
-                return name
+            // Name steht in der Aufgabe selbst ("Herr Wagner klärt die Telefonanlage"), nicht als Empfänger ("für Herrn X")
+            TASK_NAME.find(taskText.substringBefore("("))?.takeIf { m ->
+                m.range.first == 0 || TranscriptRules.assignedName(taskText.substring(m.range.first)) != null
+            }?.let { m -> return "${m.groupValues[1]} ${m.groupValues[2]}" }
+            val labelId = Regex("^Person (\\d+)$").find(o)?.groupValues?.get(1)?.toInt()?.minus(1)
+            if (ref in segments.indices) {
+                // Beleg: Anrede/Zuweisung, Selbstverpflichtung oder Bitte im passenden Satz
+                TranscriptRules.ownerFromRef(ref, segments, known, nameOf, taskText)?.let { return it }
+                // Genannte Sprecherbezeichnung hat selbst zugesagt: beibehalten
+                if (labelId != null && TranscriptRules.selfCommittedNear(labelId, ref, segments))
+                    return known[labelId] ?: owner
+                for (i in listOf(ref, ref - 1)) {
+                    val seg = segments.getOrNull(i) ?: continue
+                    val m = ADDRESS.find(seg.text) ?: continue
+                    val name = (if (m.groupValues[1] == "Herrn") "Herr" else m.groupValues[1]) + " " + m.groupValues[2]
+                    // Wer spricht, meint mit der Anrede jemand anderen
+                    if (nameOf(seg.speakerId).equals(name, ignoreCase = true) ||
+                        known[seg.speakerId].equals(name, ignoreCase = true)) continue
+                    return name
+                }
             }
+            // Sprecherbezeichnung, deren Name aus der Anrede bekannt ist
+            labelId?.let { id -> known[id]?.let { return it } }
             return owner
+        }
+
+        /**
+         * Beleg einer Aufgabe prüfen: fehlt er oder teilt er kein Wort mit der Aufgabe, den passendsten Beitrag
+         * nehmen. Passt eine Zusage/ein Auftrag deutlich (zwei Wörter) und der Beleg enthält keinen, die Zusage.
+         */
+        internal fun checkRef(taskText: String, ref: Int, segments: List<Segment>,
+                              commitments: List<TranscriptRules.Commitment> = emptyList()): Int {
+            val own = if (ref in segments.indices) (words(taskText) intersect words(segments[ref].text)).size else 0
+            val best = locateRef(taskText, segments)
+            val bestScore = if (best >= 0) (words(taskText) intersect words(segments[best].text)).size else 0
+            var r = if (ref !in segments.indices) best
+            // Nachbarzeile vertauscht: ein anderer Beitrag passt deutlich besser (zwei Wörter mehr)
+            else if (own > 0 && bestScore < own + 2) ref
+            else best.takeIf { it >= 0 } ?: ref
+            val w = words(taskText)
+            fun shared(c: TranscriptRules.Commitment) = w.count { c.sentence.lowercase().contains(it) }
+            if (commitments.none { it.ref == r && shared(it) >= 1 }) {
+                commitments.filter { shared(it) >= 2 }.maxByOrNull { shared(it) }?.let { r = it.ref }
+                    // Ohne Beleg: genau eine Zusage mit einem gemeinsamen Wort ("Kundendienst")
+                    ?: if (r !in segments.indices) commitments.filter { shared(it) >= 1 }.map { it.ref }.distinct()
+                        .singleOrNull()?.let { r = it }
+                    // Beleg ist die Frage davor ("Gibt es einen Zuschuss?"), der Auftrag folgt direkt danach
+                    else commitments.firstOrNull { it.ref == r + 1 && shared(it) >= 1 }?.let { r = it.ref }
+            }
+            return r
+        }
+
+        /**
+         * Frist einer Aufgabe: Angabe des Modells, wenn sie im Beleg (oder direkt davor/danach) vorkommt,
+         * sonst eine eindeutige "bis …"-Angabe aus dem Beleg, sonst "offen". Zahlwörter werden zu Ziffern.
+         */
+        private val PAST_DUE = Regex("\\b(?:vorgestern|gestern|letzte[nrs]?\\s+(?:woche|monat)|vergangene[nrs]?)\\b", RegexOption.IGNORE_CASE)
+
+        internal fun checkDue(t: TaskItem, segments: List<Segment>, meeting: java.time.LocalDate): String {
+            // Vergangenes ist keine Frist
+            if (PAST_DUE.containsMatchIn(t.due)) return checkDue(t.copy(due = "offen"), segments, meeting)
+            val seg = segments.getOrNull(t.ref) ?: return t.due.takeIf { d -> d == "offen" ||
+                TranscriptRules.dueSupported(d, segments.joinToString(" ") { it.text }) }
+                ?.let { TranscriptRules.normalizeDue(it) } ?: "offen"
+            val context = (t.ref - 1..t.ref + 1).mapNotNull { segments.getOrNull(it)?.text }.joinToString(" ")
+            if (t.due != "offen" && TranscriptRules.dueSupported(t.due, context))
+                return TranscriptRules.normalizeDue(TranscriptRules.expandMonth(t.due, context))
+            val sentence = sentenceFor(t.text, seg.text)
+            // Kurze Antwort direkt danach ("Mache ich bis Mittwoch.")
+            val answer = segments.getOrNull(t.ref + 1)?.takeIf {
+                it.speakerId != seg.speakerId && it.text.length < 60 && TranscriptRules.isConfirmation(it.text)
+            }
+            // Zeitangaben ohne "bis" nur aus dem Teil, der die Aufgabe enthält ("…, bitte auf X achten")
+            val own = sentence.substringAfterLast(" bitte ", sentence)
+            return TranscriptRules.deadlineFromRef(sentence, meeting)
+                ?: TranscriptRules.deadlineFromRef(seg.text, meeting)
+                ?: answer?.let { TranscriptRules.deadlineFromRef(it.text, meeting) }
+                ?: TranscriptRules.softDeadline(t.text.substringBefore("("))
+                ?: TranscriptRules.softDeadline(own)
+                ?: answer?.let { TranscriptRules.softDeadline(it.text) }
+                ?: TranscriptRules.eventDeadline(sentence)
+                ?: "offen"
+        }
+
+        /** Deckt die Aufgabe die Zusage ab? Beleg daneben und ein gemeinsames Wort, oder zwei gemeinsame Wörter. */
+        internal fun covers(t: TaskItem, c: TranscriptRules.Commitment, segments: List<Segment>): Boolean {
+            // Wortanfänge auch innerhalb von Zusammensetzungen ("reserv" in "Busreservierung")
+            val sentence = c.sentence.lowercase()
+            // Ausdrücklich jemand anderem zugewiesen ("Frau Albers übernimmt …"): eigene Aufgabe
+            // Auftrag mit eigener Frist, die die Aufgabe nicht trägt: nur bei deutlicher Übereinstimmung abgedeckt
+            val strict = t.due == "offen" && TranscriptRules.deadlineFromRef(c.sentence, java.time.LocalDate.of(2000, 1, 3)) != null
+            if (t.ref != c.ref && TranscriptRules.assignee(c.sentence)?.substringAfterLast(' ')?.lowercase()
+                    ?.let { it !in t.owner.lowercase() } == true) return false
+            val shared = contentWords(t.text).count { sentence.contains(it) }
+            return shared >= 2 || (!strict && shared >= 1 && t.ref in (c.ref - 1)..(c.ref + 1))
+        }
+
+        /** Der Satz eines Beitrags, der die meisten Wörter mit der Aufgabe teilt (sonst der ganze Beitrag). */
+        internal fun sentenceFor(taskText: String, segText: String): String {
+            val sentences = segText.split(Regex("(?<=[.?!])\\s+")).filter { it.isNotBlank() }
+            if (sentences.size <= 1) return segText
+            val w = words(taskText)
+            val best = sentences.maxByOrNull { (words(it) intersect w).size } ?: return segText
+            return if ((words(best) intersect w).isEmpty()) segText else best
+        }
+
+        /**
+         * Regelbasierte Nacharbeit am Protokoll: Abstimmungsergebnisse in die Beschlüsse, Themen nach
+         * Tagesordnung, Fall-Gliederung bei Fallbesprechungen mit genau einer besprochenen Person.
+         */
+        internal fun refineSummary(summary: Summary, segments: List<Segment>, agenda: List<String>,
+                                   template: ProtocolTemplate, tasks: List<TaskItem> = emptyList(),
+                                   staff: Set<String> = emptySet()): Summary {
+            var s = summary
+            val votes = TranscriptRules.detectVotes(segments)
+            if (votes.isNotEmpty()) {
+                val (d, r) = TranscriptRules.mergeVotes(s.decisions, s.decisionRefs, votes)
+                s = s.copy(decisions = d, decisionRefs = r)
+            }
+            // Ausdrücklich gefasste Beschlüsse ("Dann beschließen wir: …"), die im Protokoll fehlen
+            TranscriptRules.explicitDecisions(segments).forEach { (text, ref) ->
+                val st = TranscriptRules.stems(text)
+                if (s.decisions.none { (TranscriptRules.stems(it) intersect st).size >= 2 })
+                    s = s.copy(decisions = s.decisions + text, decisionRefs = s.decisions.indices.map { s.decisionRefs.getOrElse(it) { -1 } } + ref)
+            }
+            if (agenda.isNotEmpty()) s = s.copy(topics = TranscriptRules.alignAgenda(s.topics, agenda))
+            if (template == ProtocolTemplate.FALLBESPRECHUNG && s.topics.isNotEmpty() && s.topics.none { it.title.startsWith("Fall") }) {
+                // Nur eindeutig: genau eine angesprochene Person, die keine Aufgabe übernimmt und nicht teilnimmt
+                val client = addressedClients(segments, tasks).filter { c -> staff.none { it.contains(c.lowercase()) } }.singleOrNull()
+                if (client != null) {
+                    val m = segments.firstNotNullOfOrNull { Regex("\\b(Herrn?|Frau)\\s+$client\\b").find(it.text) }
+                    val who = m?.let { "${if (it.groupValues[1] == "Herrn") "Herr" else it.groupValues[1]} $client" } ?: client
+                    s = s.copy(topics = s.topics.map { t ->
+                        t.copy(title = if (t.title.contains(client)) "Fall: ${t.title}" else "Fall: $who – ${t.title}") })
+                }
+            }
+            return s
         }
 
         /** Kürzt jeden Absatz (durch Leerzeile getrennt) auf [factor] seiner Länge, an Zeilengrenzen. */
@@ -340,6 +554,8 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
                 else part.take(keep).let { t -> t.substring(0, t.lastIndexOf('\n').takeIf { it > keep / 2 } ?: t.length) }
             }
 
+        /** Wörter ohne Personennamen ("Frau Becker" verbindet keine Aufgabe mit einer Zusage) */
+        private fun contentWords(t: String) = words(ADDRESS.replace(t, " "))
         private val WORD = Regex("[\\p{L}\\d]{4,}")
         private val STOP = setOf("bitte", "sich", "sind", "wird", "werden", "noch", "dann", "auch", "eine",
             "einen", "einer", "dass", "diese", "dieser", "nicht", "habe", "haben", "kann", "können", "sollen")
@@ -448,6 +664,7 @@ root ::= "{" ws "\"aufgaben\":" ws tasks ws tail "}"
             return (0 until arr.length()).mapNotNull {
                 val t = arr.optJSONObject(it) ?: return@mapNotNull null
                 val (text, ref) = splitRef(t.optString("aufgabe"), segmentCount)
+                    .let { (x, r) -> x.replace(SPEAKER_PREFIX, "").replaceFirstChar { c -> c.uppercase() } to r }
                 if (text.isEmpty()) return@mapNotNull null
                 fun norm(v: String) = splitRef(v, 0).first.ifEmpty { "offen" }.let {
                     if (it.equals("unbekannt", true) || it == "-" || it.equals("n/a", true) ||

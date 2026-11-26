@@ -1,0 +1,117 @@
+name: Protokollqualität (Host-Bewertung)
+
+# Schnelle Bewertungsschleife ohne Emulator und Spracherkennung: ProtocolGenerator schreibt mit dem echten
+# Sprachmodell die Protokolle der Testszenarien (scripts/e2e/scenarios), scripts/quality/score.py vergleicht
+# sie mit dem Goldstandard (scripts/quality/gold.py). Ergebnis: Trefferquoten je Stufe im Job „Auswertung“.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ultra:
+        description: "Ultra (Qwen3-8B, langsam) mitbewerten"
+        type: boolean
+        default: true
+  push:
+    branches: [quality-tune]
+    paths:
+      - "app/src/main/java/de/protokollki/engine/ProtocolGenerator.kt"
+      - "app/src/main/java/de/protokollki/engine/Vocabulary.kt"
+      - "app/src/main/java/de/protokollki/engine/DateResolver.kt"
+      - "scripts/quality/**"
+      - "scripts/e2e/scenarios/scenarios.py"
+      - ".github/workflows/quality-eval.yml"
+
+concurrency:
+  group: quality-eval-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        stage: [kompakt, standard, premium, ultra-normal, ultra-hart]
+        variant: [ohne, mit]
+        include:
+          - stage: kompakt
+            url: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
+            nothink: "0"
+          - stage: standard
+            url: https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q3_K_M.gguf
+            nothink: "0"
+          - stage: premium
+            url: https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+            nothink: "0"
+          - stage: ultra-normal
+            url: https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf
+            nothink: "1"
+            group: normal
+          - stage: ultra-hart
+            url: https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf
+            nothink: "1"
+            group: hart
+    name: ${{ matrix.stage }} · ${{ matrix.variant }}
+    env:
+      # Ultra nur bei manuellem Start (dauert lange)
+      SKIP: ${{ startsWith(matrix.stage, 'ultra') && !(github.event_name == 'workflow_dispatch' && inputs.ultra) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-java@v4
+        if: env.SKIP != 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        if: env.SKIP != 'true'
+      - name: Modell aus dem Cache
+        if: env.SKIP != 'true'
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: model.gguf
+          key: gguf-${{ matrix.url }}
+      - name: Modell laden
+        if: env.SKIP != 'true' && steps.cache.outputs.cache-hit != 'true'
+        run: curl -fsSL --retry 3 -o model.gguf "${{ matrix.url }}" && ls -lh model.gguf
+      - name: JNI-Bibliothek für Linux bauen
+        if: env.SKIP != 'true'
+        run: bash scripts/build_host_llm.sh > build-host.log 2>&1 || (tail -50 build-host.log; exit 1)
+      - name: Szenarien exportieren
+        if: env.SKIP != 'true'
+        run: python3 scripts/quality/export_scenarios.py "$RUNNER_TEMP/scenarios.json"
+      - name: Protokolle erzeugen
+        if: env.SKIP != 'true'
+        env:
+          PK_LLM_LIB: ${{ github.workspace }}/build-host/libprotokollki_llm.so
+          PK_MODEL: ${{ github.workspace }}/model.gguf
+          PK_CTX: "8192"
+          PK_NO_THINK: ${{ matrix.nothink }}
+          PK_STAGE: ${{ startsWith(matrix.stage, 'ultra') && 'ultra' || matrix.stage }}
+          PK_VARIANTS: ${{ matrix.variant }}
+          PK_GROUP: ${{ matrix.group }}
+        run: ./gradlew --no-daemon -q -p scripts/quality/eval run --args="$RUNNER_TEMP/scenarios.json $GITHUB_WORKSPACE/result.jsonl"
+      - name: Bewertung
+        if: always() && env.SKIP != 'true'
+        run: python3 scripts/quality/score.py result.jsonl --details
+      - uses: actions/upload-artifact@v4
+        if: always() && env.SKIP != 'true'
+        with:
+          name: result-${{ matrix.stage }}-${{ matrix.variant }}
+          path: result.jsonl
+
+  summary:
+    name: Auswertung
+    needs: eval
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: results
+      - name: Trefferquoten aller Stufen
+        run: python3 scripts/quality/score.py results/*/result.jsonl --details | tee -a "$GITHUB_STEP_SUMMARY"

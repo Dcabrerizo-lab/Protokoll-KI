@@ -20,3 +20,7 @@ __pycache__/
 
 # Stress-Szenarien und Benchmark: Audio wird erzeugt, nicht eingecheckt
 scripts/e2e/scenarios/out/stress_*
+scripts/quality/eval/build/
+scripts/quality/eval/.gradle/
+scripts/quality/eval/.kotlin/
+scripts/quality/__pycache__/
