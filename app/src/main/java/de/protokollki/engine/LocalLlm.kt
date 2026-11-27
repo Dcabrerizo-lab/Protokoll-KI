@@ -120,17 +120,12 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
          * Kopie der Gewichte im RAM. Nur wenn danach noch reichlich frei ist; stürzt die App trotzdem
          * ab, schaltet der Absturzwächter ihn beim nächsten Mal ab.
          */
-        fun fastAllowed(context: Context, modelBytes: Long): Boolean {
-            val am = context.getSystemService(android.app.ActivityManager::class.java) ?: return false
-            val mi = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
-            // Nur für Gerätetests: Schnellmodus erzwingen (RealDeviceTest, Paket "…+schnell")
+        fun fastAllowed(context: Context, @Suppress("UNUSED_PARAMETER") modelBytes: Long): Boolean {
+            // Nur für Gerätetests: Schnellmodus (umgepackte Gewichte) erzwingen, Paket "…+schnell"
             if (context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("force_fast", false)) return true
-            if (mi.lowMemory) return false
-            // Schnellmodus legt die Gewichte umgepackt fest in den RAM (nicht eingeblendet). Gerätetest
-            // 26.11. auf dem S23+ (8 GB, 4,2 GB frei): danach nur 1,9 GB frei, lange Besprechung lief
-            // über 25 min statt 11 min (System lagert aus). Daher nur auf Handys ab 12 GB und mit viel Reserve.
-            if (mi.totalMem < 11L * 1024 * 1024 * 1024) return false
-            return mi.availMem > modelBytes + 3000L * 1024 * 1024
+            // Gerätetests: 26.11. S23+ lange Besprechung > 25 min; 27.11. erzwungen kam schon das Einlesen
+            // einer 69-s-Besprechung in 45 min nicht zu Ende (2 GB RAM frei). Auf keinem Handy schneller: aus.
+            return false
         }
 
         fun contextFor(context: Context, set: ModelSet, modelBytes: Long): Int {
