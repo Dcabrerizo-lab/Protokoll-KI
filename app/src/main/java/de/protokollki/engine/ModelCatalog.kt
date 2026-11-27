@@ -164,7 +164,23 @@ object ModelCatalog {
         ),
     )
 
-    fun byId(id: String?) = sets.firstOrNull { it.id == id }
+    /**
+     * Nur für Gerätetests (nicht in der Auswahl): Qwen3 4B in Q4_0. Für dieses Format hat der Grafikchip
+     * (Adreno/OpenCL) eigens optimierte Rechenkerne; Q4_K_M lief dort beim Schreiben langsamer als auf dem Prozessor.
+     */
+    private val testSets = listOf(
+        sets.first { it.id == "premium" }.copy(
+            id = "premium_q40",
+            label = "Premium (Q4_0, Test)",
+            llm = ModelFile(
+                url = "$HF/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_0.gguf",
+                target = "Qwen3-4B-Instruct-2507-Q4_0.gguf",
+                bytes = 2_380_000_000,
+            ),
+        ),
+    )
+
+    fun byId(id: String?) = sets.firstOrNull { it.id == id } ?: testSets.firstOrNull { it.id == id }
 
     fun totalRamGb(context: Context): Double {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
