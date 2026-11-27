@@ -64,12 +64,15 @@ class RealDeviceTest {
 
     /** Gewünschtes Paket: `-e modelSet <id>` oder die Empfehlung der App für dieses Handy. */
     private fun wantedSet(): ModelSet {
-        val raw = arg("modelSet")
-        // "premium+schnell": Schnellmodus (umgepackte Gewichte) erzwingen, um ihn auf dem Gerät zu messen
-        val force = raw?.endsWith("+schnell") == true
-        context.getSharedPreferences("llm_guard", Context.MODE_PRIVATE).edit().putBoolean("force_fast", force).commit()
-        report("schnell_erzwungen", force)
-        val id = raw?.removeSuffix("+schnell")
+        val parts = arg("modelSet")?.split('+').orEmpty()
+        // "premium+schnell": Schnellmodus (umgepackte Gewichte), "premium+gpu": Grafikchip – zum Messen erzwingen
+        val fast = "schnell" in parts
+        val gpu = "gpu" in parts
+        context.getSharedPreferences("llm_guard", Context.MODE_PRIVATE).edit()
+            .putBoolean("force_fast", fast).putBoolean("force_gpu", gpu).commit()
+        report("schnell_erzwungen", fast)
+        report("gpu_erzwungen", gpu)
+        val id = parts.firstOrNull()
         if (id == null || id == "recommended") return ModelCatalog.recommended(context)
         return ModelCatalog.byId(id) ?: error("Unbekanntes Modellpaket „$id“")
     }

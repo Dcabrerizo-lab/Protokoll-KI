@@ -9,8 +9,8 @@ class LlmException(message: String) : Exception(message)
 
 /** Gleiche JNI-Signaturen wie in LocalLlm.kt (Symbolnamen Java_de_protokollki_engine_LlamaNative_*). */
 object LlamaNative {
-    fun initForTest(libPath: String) { System.load(libPath); init("") }
-    external fun init(nativeLibDir: String)
+    fun initForTest(libPath: String) { System.load(libPath); init("", false) }
+    external fun init(nativeLibDir: String, gpu: Boolean)
     external fun load(modelPath: String, nCtx: Int, nThreads: Int, fast: Boolean): Long
     external fun contextSize(handle: Long): Int
     external fun countTokens(handle: Long, text: String): Int

@@ -24,6 +24,7 @@
 namespace {
 
 constexpr int BATCH_SIZE = 512;
+bool g_gpu = false;   // Grafikchip-Backend geladen und mit Gerät
 // Höchstens so viele Entwurfs-Tokens je Durchgang (Prompt Lookup); 0 schaltet es ab.
 // PK_LOOKUP="max:mindest-n-gramm" überschreibt es für Messläufe auf dem Host (z. B. "0" oder "4:3").
 int LOOKUP_MAX = 0;   // Messung 26.11.: auf CPUs kein Gewinn (Durchgang mit 5 Tokens kostet fast doppelt), daher aus
@@ -200,9 +201,21 @@ int fast_cores(int cores) {
 extern "C" {
 
 JNIEXPORT void JNICALL
-Java_de_protokollki_engine_LlamaNative_init(JNIEnv *env, jobject, jstring native_lib_dir) {
+Java_de_protokollki_engine_LlamaNative_init(JNIEnv *env, jobject, jstring native_lib_dir, jboolean gpu) {
     llama_log_set(log_callback, nullptr);
     const std::string dir = jstr(env, native_lib_dir);
+    // Grafikchip (OpenCL, Adreno) nur auf Wunsch laden: eigener Dateiname, damit er nicht automatisch mitkommt
+    if (gpu == JNI_TRUE && !dir.empty()) {
+        const std::string lib = dir + "/libpkgpu-opencl.so";
+        ggml_backend_reg_t reg = access(lib.c_str(), R_OK) == 0 ? ggml_backend_load(lib.c_str()) : nullptr;
+        std::string devs;
+        if (reg) for (size_t i = 0; i < ggml_backend_reg_dev_count(reg); ++i) {
+            ggml_backend_dev_t d = ggml_backend_reg_dev_get(reg, i);
+            devs += std::string(i ? ", " : "") + ggml_backend_dev_name(d) + " (" + ggml_backend_dev_description(d) + ")";
+        }
+        g_gpu = reg != nullptr && ggml_backend_reg_dev_count(reg) > 0;
+        LOGI("PKREPORT gpu=%s%s", g_gpu ? "ja: " : "nein", g_gpu ? devs.c_str() : (reg ? " (kein Gerät)" : " (Bibliothek nicht ladbar)"));
+    }
     ggml_backend_load_all_from_path(dir.c_str());
     llama_backend_init();
     // Welche CPU-Variante (NEON, DOTPROD, I8MM, SVE …) geladen wurde: wichtig für die Geschwindigkeit
@@ -214,7 +227,7 @@ Java_de_protokollki_engine_LlamaNative_load(JNIEnv *env, jobject, jstring jpath,
                                             jint n_threads, jboolean fast) {
     auto *e = new Engine();
     llama_model_params mp = llama_model_default_params();
-    mp.n_gpu_layers = 0;
+    mp.n_gpu_layers = g_gpu ? 999 : 0;
     // Umgepackte Gewichte: schneller, aber eine zweite Kopie im RAM. Nur wenn genug frei ist.
     mp.use_extra_bufts = fast == JNI_TRUE;
     const std::string path = jstr(env, jpath);

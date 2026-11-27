@@ -16,7 +16,7 @@ object LlamaNative {
         synchronized(this) {
             if (initialized) return
             System.loadLibrary("protokollki_llm")
-            init(context.applicationInfo.nativeLibraryDir)
+            init(context.applicationInfo.nativeLibraryDir, gpuWanted(context))
             initialized = true
         }
     }
@@ -25,11 +25,22 @@ object LlamaNative {
     fun initForTest(libPath: String) {
         if (initialized) return
         System.load(libPath)
-        init("")
+        init("", false)
         initialized = true
     }
 
-    external fun init(nativeLibDir: String)
+    /**
+     * Grafikchip (OpenCL) nutzen? Vorerst nur im Gerätetest (Paket "…+gpu"), bis er auf echten Handys
+     * gemessen ist. Nur Qualcomm-Chips (Adreno); auf anderen Handys gar nicht erst laden.
+     */
+    fun gpuWanted(context: Context): Boolean {
+        val qualcomm = android.os.Build.VERSION.SDK_INT >= 31 &&
+            android.os.Build.SOC_MANUFACTURER.equals("QTI", ignoreCase = true) ||
+            android.os.Build.HARDWARE.lowercase().let { it.startsWith("qcom") || it.contains("kalama") || it.contains("pineapple") }
+        return qualcomm && context.getSharedPreferences("llm_guard", Context.MODE_PRIVATE).getBoolean("force_gpu", false)
+    }
+
+    external fun init(nativeLibDir: String, gpu: Boolean)
     external fun load(modelPath: String, nCtx: Int, nThreads: Int, fast: Boolean): Long
     external fun contextSize(handle: Long): Int
     external fun countTokens(handle: Long, text: String): Int

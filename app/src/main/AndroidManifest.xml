@@ -24,6 +24,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ProtokollKI">
 
+        <!-- Grafikchip (OpenCL) des Herstellers, falls vorhanden; ohne läuft alles auf dem Prozessor -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
