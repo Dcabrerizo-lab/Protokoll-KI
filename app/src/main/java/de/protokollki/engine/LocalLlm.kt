@@ -123,6 +123,8 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
         fun fastAllowed(context: Context, modelBytes: Long): Boolean {
             val am = context.getSystemService(android.app.ActivityManager::class.java) ?: return false
             val mi = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+            // Nur für Gerätetests: Schnellmodus erzwingen (RealDeviceTest, Paket "…+schnell")
+            if (context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("force_fast", false)) return true
             if (mi.lowMemory) return false
             // Schnellmodus legt die Gewichte umgepackt fest in den RAM (nicht eingeblendet). Gerätetest
             // 26.11. auf dem S23+ (8 GB, 4,2 GB frei): danach nur 1,9 GB frei, lange Besprechung lief

@@ -491,6 +491,9 @@ Java_de_protokollki_engine_LlamaNative_complete(JNIEnv *env, jobject, jlong hand
         // Verworfene Entwurfs-Positionen aus dem Cache entfernen
         if (ok < nd) llama_memory_seq_rm(llama_get_memory(e->ctx), 0, pos, -1);
         logit_idx = -1;
+        // Zwischenstand für Gerätetests (zeigt, ob das Schreiben stockt, z. B. bei Speichermangel)
+        if (produced / 256 != (produced - 1 - ok) / 256)
+            LOGI("PKREPORT llmzwischen=%d Tok nach %.0f s", produced, (ggml_time_us() - t1) / 1e6);
         if (!report(1, produced, max_tokens)) break;
     }
     llama_sampler_free(smpl);
