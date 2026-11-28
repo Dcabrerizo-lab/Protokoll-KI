@@ -19,7 +19,7 @@ jobs:
       matrix:
         include:
           - name: premium-qwen3-4b
-            url: https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+            url: https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_0.gguf
             ctx: 16384
             nothink: "0"
           - name: ultra-qwen3-8b
