@@ -70,7 +70,7 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
         System.gc()
         val crashed = crashedLastTime(context)
         val threads = if (crashed) 4 else 0
-        val fast = !crashed && fastAllowed(context, java.io.File(path).length())
+        val fast = !crashed && fastAllowed(context, java.io.File(path))
         android.util.Log.i("ProtokollKI", "Schnellmodus: $fast")
         appContext = context.applicationContext
         markRunning(appContext, true)
@@ -131,12 +131,18 @@ class LocalLlm(context: Context, private val set: ModelSet) : AutoCloseable {
          * Kopie der Gewichte im RAM. Nur wenn danach noch reichlich frei ist; stürzt die App trotzdem
          * ab, schaltet der Absturzwächter ihn beim nächsten Mal ab.
          */
-        fun fastAllowed(context: Context, @Suppress("UNUSED_PARAMETER") modelBytes: Long): Boolean {
+        fun fastAllowed(context: Context, model: java.io.File): Boolean {
             // Nur für Gerätetests: Schnellmodus (umgepackte Gewichte) erzwingen, Paket "…+schnell"
             if (context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("force_fast", false)) return true
-            // Gerätetests: 26.11. S23+ lange Besprechung > 25 min; 27.11. erzwungen kam schon das Einlesen
-            // einer 69-s-Besprechung in 45 min nicht zu Ende (2 GB RAM frei). Auf keinem Handy schneller: aus.
-            return false
+            // Umpacken nur für Q4_0: dafür sind die Int8-Matrixbefehle der Handys gemacht. S23+ (28.11.):
+            // kurze Besprechung 186 statt 250 s, Einlesen doppelt so schnell, Schreiben 6,4 statt 5,7 T/s.
+            // Q4_K_M umgepackt hing dagegen schon beim Einlesen (26./27.11.).
+            if (!model.name.contains("q4_0", ignoreCase = true)) return false
+            val am = context.getSystemService(android.app.ActivityManager::class.java) ?: return false
+            val mi = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+            if (mi.lowMemory) return false
+            // Umgepackte Gewichte liegen fest im RAM (S23+: frei 3,9 → 2,1 GB, Minimum 0,9 GB bei langer Besprechung)
+            return mi.availMem > model.length() + 1500L * 1024 * 1024
         }
 
         fun contextFor(context: Context, set: ModelSet, modelBytes: Long): Int {
